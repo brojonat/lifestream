@@ -50,9 +50,6 @@ build their own store for their data. What they can't build alone: a
 trustworthy rating system, good "you might also enjoy" recommendations, and
 rankings and leaderboards, which also make the Halo-map angle a game.
 
-**Buyers queue or bid for a limited amount of seller content.** That is the
-product we offer.
-
 ## Origin
 
 It started with a chore: typing the date and my weight into a spreadsheet
