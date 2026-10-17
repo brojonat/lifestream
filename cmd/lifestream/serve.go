@@ -18,8 +18,6 @@ import (
 	"github.com/brojonat/lifestream/internal/dispatch"
 	"github.com/brojonat/lifestream/internal/ingest"
 	"github.com/brojonat/lifestream/internal/metrics"
-	"github.com/brojonat/lifestream/internal/state"
-	"github.com/brojonat/lifestream/internal/watch"
 	"github.com/brojonat/lifestream/internal/web"
 	"github.com/urfave/cli/v3"
 )
@@ -27,12 +25,13 @@ import (
 func serveCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "serve",
-		Usage: "run the app and open it in a browser",
-		Description: `Starts an HTTP server bound to --addr with an embedded NATS JetStream
-instance for state under --data-dir. Pages hold one long-lived SSE connection
-each and repaint whenever state changes. The server shuts down cleanly on
-SIGINT or SIGTERM. Log lines go to stderr; set LOG_LEVEL=debug|info|warn|error
-and LOG_FORMAT=json for machine-readable logs.`,
+		Usage: "run the service",
+		Description: `Serves the dashboard, /twilio/sms and /events on --addr, and the agent's
+internal API on --api-addr. The event store is lifestream.db under
+--data-dir. Dashboard pages hold one SSE connection each and repaint on
+every append. With --agent-url, raw events are dispatched to the agent.
+Shuts down cleanly on SIGINT or SIGTERM. Logs go to stderr; set
+LOG_LEVEL=debug|info|warn|error and LOG_FORMAT=json.`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:    "addr",
@@ -62,15 +61,6 @@ and LOG_FORMAT=json for machine-readable logs.`,
 				Usage:   "Twilio auth `TOKEN`; /twilio/sms is off without it",
 				Sources: cli.EnvVars("TWILIO_AUTH_TOKEN"),
 			},
-			&cli.StringSliceFlag{
-				Name:  "watch",
-				Usage: "repaint pages when files under `DIR` change (repeatable)",
-			},
-			&cli.DurationFlag{
-				Name:  "poll",
-				Value: 2 * time.Second,
-				Usage: "how often to check watched directories",
-			},
 			&cli.DurationFlag{
 				Name:  "metrics-interval",
 				Value: 5 * time.Second,
@@ -97,13 +87,6 @@ func runServe(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("starting embedded nats: %w", err)
 	}
 	defer b.Close()
-	kv, err := b.KV(ctx, "app")
-	if err != nil {
-		return err
-	}
-	store := state.New(kv)
-	go watch.Run(ctx, cmd.StringSlice("watch"), store, cmd.Duration("poll"), log)
-
 	collector := metrics.NewCollector()
 	mstream, err := b.Stream(ctx, metrics.StreamName, []string{metrics.Subject}, 24*time.Hour)
 	if err != nil {
@@ -139,7 +122,7 @@ func runServe(ctx context.Context, cmd *cli.Command) error {
 	}
 	mux.Handle("POST /events", ingest.Events(st, log))
 	mux.Handle("/", web.NewHandler(web.Deps{
-		App: "Lifestream", Store: store, Log: log,
+		App: "Lifestream", Events: st, Log: log,
 		Collector: collector, MetricsKV: mkv, MetricsStream: mstream, JS: b.JS(), DataDir: dataDir, Interval: interval,
 	}))
 	servers := []*http.Server{newServer(ctx, mux), newServer(ctx, api.NewHandler(st, log))}

@@ -1,0 +1,28 @@
+{{define "region"}}<main id="metrics">
+{{if not .Cards}}<p class="empty">No metrics yet. Text something like <code>weight 175</code> and the agent will start one.</p>
+{{else}}{{range .Cards}}<section class="card" aria-labelledby="m-{{.ID}}">
+  <div class="row"><h2 id="m-{{.ID}}">{{.Name}}</h2><span class="muted">{{.Count}} readings in 90 days{{if .Closed}} · stopped{{end}}</span></div>
+  <div class="tiles">
+    <article class="tile">
+      <div class="label">Latest{{with .Latest}} · {{.ObservedAt | ago}}{{end}}</div>
+      <div class="value">{{with .Latest}}{{num .Value}}{{else}}–{{end}}<span class="unit">{{.Unit}}</span></div>
+    </article>
+    <article class="tile">
+      <div class="label">7-day average</div>
+      <div class="value">{{with .ThisWeek}}{{num (deref .)}}{{else}}–{{end}}<span class="unit">{{.Unit}}</span></div>
+    </article>
+    <article class="tile">
+      <div class="label">vs the week before</div>
+      <div class="value">{{with .Change}}{{if gt (deref .) 0.0}}▲ {{else if lt (deref .) 0.0}}▼ {{end}}{{signed (deref .)}}{{else}}–{{end}}<span class="unit">{{if .Change}}{{.Unit}}{{end}}</span></div>
+    </article>
+  </div>
+  {{if .Count}}<chart-timeseries id="chart-{{.ID}}" points="{{.Points}}" average="{{.Average}}" unit="{{.Unit}}" label="{{.ChartLabel}}"></chart-timeseries>
+  <details><summary>Table</summary>
+    <table><thead><tr><th>When</th><th class="num">{{.Name}}</th><th class="num">7-day average</th></tr></thead>
+    <tbody>{{range .Rows}}<tr><td>{{.At.Format "Mon Jan 2 15:04"}}</td><td class="num">{{num .Value}}</td><td class="num">{{num .Average}}</td></tr>
+    {{end}}</tbody></table>
+  </details>{{end}}
+</section>
+{{end}}{{end}}
+</main>
+{{end}}

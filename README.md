@@ -67,9 +67,15 @@ Public listener (`--addr`, what the ingress exposes):
 | --- | --- |
 | `POST /twilio/sms` | Twilio webhook. Verifies `X-Twilio-Signature`, drops unknown senders, appends `message.received`, answers empty TwiML. Never waits on the agent. |
 | `POST /events` | Generic JSON events, `Authorization: Bearer <user token>`. One object, a JSON array, or JSONL. |
-| `GET /` | Dashboard (live over SSE) |
+| `GET /` | Metrics: per metric collection, latest / 7-day average / change vs the week before, and a chart of readings with a trailing 7-day average (live over SSE) |
+| `GET /inbox` | The last 50 raw events and what each became (labels, values, flags); flagged ones highlighted |
+| `GET /admin` | Process diagnostics |
 | `GET /healthz` | `ok` |
 | `GET /metrics` | Prometheus text format |
+
+Until login exists (TODO 24) the dashboard serves the only user and
+answers 503 if there are several, so **don't expose it through the ingress
+yet**; use `kubectl port-forward`.
 
 Internal listener (`--api-addr`, reachable only inside the pod; the agent's
 side of the contract):
@@ -112,8 +118,10 @@ Environment variables only (mise loads `.env` if present; never commit it).
 cmd/lifestream/      CLI and wiring
 internal/store/      SQLite: events (append-only, hash chain), users, dispatch state, projections
 internal/ingest/     /twilio/sms and /events
-internal/bus/        embedded NATS (in-process) used as the wake-up bus
+internal/api/        the agent's internal API
+internal/dispatch/   delivers raw events to the agent
+internal/bus/        embedded NATS (in-process), backs the diagnostics samples
 internal/metrics/    process metrics, /metrics
-internal/web/        dashboard handlers and templates
+internal/web/        dashboard handlers, templates, assets/components.js (d3 + Rocket)
 agent/               the Pi Durable agent (TypeScript)
 ```

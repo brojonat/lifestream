@@ -21,7 +21,6 @@ var tiles = []metrics.Metric{
 	{Name: "goroutines", Label: "Goroutines"},
 	{Name: "streams", Label: "Open streams"},
 	{Name: "req_per_min", Label: "Requests", Unit: "/min"},
-	{Name: "search_ms", Label: "Search latency", Unit: " ms"},
 	{Name: "errors", Label: "5xx responses"},
 }
 
@@ -58,7 +57,7 @@ type adminData struct {
 func (s *Server) adminView(r *http.Request) (any, error) {
 	ctx := r.Context()
 	data := adminData{
-		pageData: s.base("Diagnostics", "/admin/stream", false),
+		pageData: s.base("Diagnostics", "/admin/stream", "admin"),
 		Limits:   metrics.ReadLimits(ctx, s.JS, s.DataDir, bus.MaxMemory, bus.MaxStore),
 		Uptime:   s.Collector.Uptime().Round(time.Second).String(),
 		Interval: s.Interval.String(),
@@ -206,7 +205,12 @@ func (s *Server) setThreshold(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// metricsWatch wakes the dashboard on new samples and threshold changes.
-func (s *Server) metricsWatch(ctx context.Context) (watcher, error) {
-	return metrics.Watch(ctx, s.MetricsKV)
+// metricsWatch wakes the diagnostics page on new samples and threshold
+// changes.
+func (s *Server) metricsWatch(ctx context.Context) (changes, error) {
+	w, err := metrics.Watch(ctx, s.MetricsKV)
+	if err != nil {
+		return nil, err
+	}
+	return kvChanges(w), nil
 }

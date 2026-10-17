@@ -6,56 +6,74 @@
 <title>{{.Title}} · {{.App}}</title>
 <link rel="icon" type="image/png" href="/favicon.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.2/bundles/datastar.js"></script>
+<!-- datastar-rocket.js is the full Datastar bundle plus Rocket (web
+     components); it replaces datastar.js. Pinned versions, no build step. -->
+<script type="importmap">
+{"imports": {
+  "datastar": "https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.4/bundles/datastar-rocket.js",
+  "d3": "https://cdn.jsdelivr.net/npm/d3@7.9.0/+esm"
+}}
+</script>
+<script type="module" src="/static/components.js"></script>
 <style>
-  :root { color-scheme: light dark; }
-  body { font: 16px/1.5 system-ui, sans-serif; max-width: 64rem; margin: 0 auto; padding: 1rem; }
-  header { display: flex; gap: 1rem; align-items: baseline; margin-bottom: 1.5rem; }
+  /* Reference dataviz palette (validated); dark steps selected, not flipped. */
+  :root { color-scheme: light dark;
+          --surface: #fcfcfb; --ink: #1d1d1b; --ink-muted: #6e6d68; --baseline: #c3c2b7; --grid: #e7e6df;
+          --cat-1: #2a78d6; --cat-2: #eb6834; --series-1: #2a78d6;
+          --status-good: #0ca30c; --status-warning: #fab219; --status-critical: #d03b3b; --track: #cde2fb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --surface: #1a1a19; --ink: #e9e8e3; --ink-muted: #a3a29b; --baseline: #383835; --grid: #2a2a28;
+            --cat-1: #3987e5; --cat-2: #d95926; --series-1: #3987e5; --track: #0d366b; } }
+  body { font: 16px/1.5 system-ui, sans-serif; max-width: 64rem; margin: 0 auto; padding: 1rem;
+         background: var(--surface); color: var(--ink); }
+  header { display: flex; gap: 1.25rem; align-items: baseline; flex-wrap: wrap; margin-bottom: 1.25rem; }
   header h1 { font-size: 1.25rem; margin: 0; }
   header a { color: inherit; text-decoration: none; }
-  header nav a { margin-right: 1rem; opacity: .75; }
-  header .search { flex: 1; min-width: 12rem; margin-left: auto; }
-  #filter button { font: inherit; font-size: .9rem; cursor: pointer; border-radius: 999px; padding: .2rem .7rem; color: inherit;
-                   background: transparent; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
-  #filter button[aria-pressed="true"] { background: color-mix(in srgb, currentColor 15%, transparent); border-color: currentColor; }
-  header .search input { width: 100%; padding: .45rem .7rem; border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: transparent; color: inherit; }
-  #results:not(:empty) { margin: 0 0 1.5rem; padding: .75rem 1rem; border-radius: 8px; background: color-mix(in srgb, currentColor 6%, transparent); }
-  #results h2 { font-size: .85rem; opacity: .7; text-transform: uppercase; letter-spacing: .04em; }
-  #results ol { margin: 0; padding-left: 1.25rem; }
-  #results li { margin: .35rem 0; }
-  #results li.top { font-weight: 600; }
-  #results li.top .muted, #results li .muted { font-weight: 400; }
-  #results .snippet { display: block; opacity: .7; font-size: .9rem; font-weight: 400; }
+  header nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+  header nav a { opacity: .7; }
+  header nav a[aria-current] { opacity: 1; font-weight: 600; }
   h2 { margin: 0 0 .25rem; font-size: 1.1rem; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid color-mix(in srgb, currentColor 15%, transparent); vertical-align: top; }
-  th { font-weight: 600; font-size: .85rem; opacity: .7; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); vertical-align: top; }
+  th { font-weight: 600; font-size: .85rem; color: var(--ink-muted); }
+  td.num, th.num { text-align: right; }
   code { font-size: .85rem; background: color-mix(in srgb, currentColor 8%, transparent); padding: .1em .3em; border-radius: 3px; }
-  .muted { opacity: .65; font-size: .9rem; }
+  .muted { color: var(--ink-muted); font-size: .9rem; }
   .row { display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap; }
-  button.star { background: none; border: 0; cursor: pointer; font-size: 1.25rem; line-height: 1; padding: 0 .25rem; }
-  textarea, input, select { font-size: 16px; font-family: inherit; }
-  textarea { width: 100%; min-height: 4rem; box-sizing: border-box; }
-  .add { display: flex; gap: .5rem; margin: .75rem 0 1rem; }
-  .add input { flex: 1; padding: .45rem .7rem; border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: transparent; color: inherit; }
-  .add button, button.x { font: inherit; padding: .3rem .8rem; border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: transparent; color: inherit; cursor: pointer; }
-  button.x { border: 0; opacity: .6; }
-  .note { margin: .75rem 0 1rem; }
-  .note-view { cursor: text; padding: .5rem .7rem; border-radius: 6px; border: 1px dashed color-mix(in srgb, currentColor 25%, transparent); }
-  .note-view:hover, .note-view:focus { border-style: solid; outline: none; }
-  .note-text { white-space: pre-wrap; word-break: break-word; }
-  .note-edit button { font: inherit; padding: .25rem .7rem; border-radius: 6px; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: transparent; color: inherit; cursor: pointer; }
-  .empty { padding: 2rem; text-align: center; opacity: .6; }
-                background: color-mix(in srgb, currentColor 10%, Canvas); border: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
-  /* dataviz roles: reference palette, light then dark */
-  .viz-root { --series-1: #2a78d6; --ink-muted: #898781; --baseline: #c3c2b7; --status-good: #0ca30c; --status-warning: #fab219; --status-critical: #d03b3b; --track: #cde2fb; }
-  @media (prefers-color-scheme: dark) { .viz-root { --series-1: #3987e5; --baseline: #383835; --track: #0d366b; } }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr)); gap: .75rem; margin: 1rem 0; }
+  .empty { padding: 2rem 1rem; text-align: center; color: var(--ink-muted); }
+  textarea, input, select, button { font-size: 16px; font-family: inherit; }
+
+  /* metrics */
+  .card { padding: 1rem 0 1.5rem; border-bottom: 1px solid color-mix(in srgb, currentColor 10%, transparent); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: .75rem; margin: .75rem 0; }
   .tile { padding: .75rem .9rem; border-radius: 8px; border: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
+  .tile .label { font-size: .85rem; color: var(--ink-muted); }
+  .tile .value { font-size: 1.6rem; font-weight: 600; line-height: 1.2; margin: .1rem 0 .2rem; font-variant-numeric: tabular-nums; }
+  .tile .unit { font-size: .85rem; font-weight: 400; color: var(--ink-muted); margin-left: .2rem; }
+  details { margin-top: .5rem; }
+  summary { cursor: pointer; color: var(--ink-muted); font-size: .9rem; }
+
+  /* inbox */
+  .status { display: inline-block; font-size: .8rem; padding: .05rem .5rem; border-radius: 999px; white-space: nowrap;
+            border: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
+  tr.flagged { background: color-mix(in srgb, var(--status-warning) 12%, transparent); }
+  .status.flagged { border-color: var(--status-warning); }
+  .chip { display: inline-block; font-size: .85rem; padding: 0 .45rem; margin: 0 .25rem .2rem 0; border-radius: 4px;
+          background: color-mix(in srgb, var(--cat-1) 14%, transparent); }
+  .text { white-space: pre-wrap; word-break: break-word; }
+  @media (max-width: 640px) {
+    table.inbox thead { display: none; }
+    table.inbox tr { display: grid; grid-template-columns: 1fr auto; gap: .25rem .75rem; padding: .6rem .5rem;
+                     border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
+    table.inbox td { border: 0; padding: 0; }
+    table.inbox td.state { grid-column: 2; grid-row: 1; text-align: right; }
+    table.inbox td.text, table.inbox td.became { grid-column: 1 / -1; }
+    table.inbox td.became:empty { display: none; }
+  }
+
+  /* diagnostics (template admin page) */
+  .viz-root { --series-1: var(--cat-1); }
   .tile.over { border-color: var(--status-critical); }
-  .tile .label { font-size: .85rem; opacity: .7; }
-  .tile .value { font-size: 1.6rem; font-weight: 600; line-height: 1.2; margin: .1rem 0 .3rem; }
-  .tile .unit { font-size: .85rem; font-weight: 400; opacity: .7; margin-left: .15rem; }
   .spark { display: block; overflow: visible; }
   .spark .line { fill: none; stroke: var(--ink-muted); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
   .spark .base { stroke: var(--baseline); stroke-width: 1; }
@@ -66,7 +84,7 @@
   .threshold label { display: flex; align-items: center; gap: .35rem; }
   .threshold input { width: 5.5rem; padding: .2rem .4rem; border-radius: 4px; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: transparent; color: inherit; }
   .tile { display: flex; flex-direction: column; }
-  .status { white-space: nowrap; text-align: center; margin-top: .5rem; font-size: .85rem; }
+  .tile .status { text-align: center; margin-top: .5rem; border: 0; }
   .status.critical { color: var(--status-critical); }
   .status.good { color: color-mix(in srgb, var(--status-good) 85%, currentColor); }
   .meters { display: grid; gap: .6rem; margin: 1rem 0 1.5rem; }
@@ -74,24 +92,18 @@
   .fill { height: 100%; background: var(--series-1); border-radius: 4px; }
   .fill.warning { background: var(--status-warning); }
   .fill.critical { background: var(--status-critical); }
-            color: inherit; background: color-mix(in srgb, currentColor 10%, Canvas); border: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
 </style>
 </head>
 <body data-init="@get('{{.StreamURL}}', {openWhenHidden: true})">
 <header>
   <h1><a href="/">{{.App}}</a></h1>
-  <nav><a href="/">items</a><a href="/admin">diagnostics</a></nav>
-  {{template "filter" .}}
-  <form class="search" role="search" data-on:submit="@get('/search')">
-    <input type="search" name="q" autocomplete="off" placeholder="Search items" aria-label="Search items"
-           data-bind:q
-           data-on:input__debounce.300ms="@get('/search')"
-           data-on:keydown="evt.key === 'Escape' && ($q = '', @get('/search'))">
-  </form>
+  <nav>
+    <a href="/" {{if eq .Nav "metrics"}}aria-current="page"{{end}}>metrics</a>
+    <a href="/inbox" {{if eq .Nav "inbox"}}aria-current="page"{{end}}>inbox</a>
+    <a href="/admin" {{if eq .Nav "admin"}}aria-current="page"{{end}}>diagnostics</a>
+  </nav>
 </header>
-{{template "results" .}}
 {{template "region" .}}
 </body>
 </html>
 {{end}}
-

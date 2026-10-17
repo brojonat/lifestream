@@ -3,32 +3,34 @@ package web
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/brojonat/lifestream/internal/bus"
 	"github.com/brojonat/lifestream/internal/metrics"
-	"github.com/brojonat/lifestream/internal/state"
+	"github.com/brojonat/lifestream/internal/store"
 )
 
-func newServer(t *testing.T) (http.Handler, *state.Store, *metrics.Sampler) {
+func newServer(t *testing.T) (http.Handler, *store.Store, *metrics.Sampler) {
 	t.Helper()
+	ctx := context.Background()
 	b, err := bus.Start(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(b.Close)
-	ctx := context.Background()
-	kv, err := b.KV(ctx, "app")
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { st.Close() })
 	mstream, err := b.Stream(ctx, metrics.StreamName, []string{metrics.Subject}, time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -39,20 +41,16 @@ func newServer(t *testing.T) (http.Handler, *state.Store, *metrics.Sampler) {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	c := metrics.NewCollector()
-	store := state.New(kv)
-	h := NewHandler(Deps{App: "test", Store: store, Log: log,
+	h := NewHandler(Deps{App: "test", Events: st, Log: log,
 		Collector: c, MetricsKV: mkv, MetricsStream: mstream, JS: b.JS(), DataDir: t.TempDir(), Interval: time.Second})
-	return h, store, metrics.NewSampler(c, b.JS(), mstream, mkv, log)
+	return h, st, metrics.NewSampler(c, b.JS(), mstream, mkv, log)
 }
 
 func do(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
-		if strings.Contains(body, "=") && !strings.HasPrefix(body, "{") {
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Datastar-Request", "true")
 	}
 	rec := httptest.NewRecorder()
@@ -60,70 +58,145 @@ func do(t *testing.T, h http.Handler, method, path, body string) *httptest.Respo
 	return rec
 }
 
-func TestItemsLoop(t *testing.T) {
-	h, store, _ := newServer(t)
+// world appends events as the agent and a phone would.
+type world struct {
+	t     *testing.T
+	st    *store.Store
+	owner string
+}
+
+func (w world) add(source, typ, parent string, at time.Time, payload any) store.Event {
+	w.t.Helper()
+	p, _ := json.Marshal(payload)
+	e, _, err := w.st.Append(context.Background(), store.Event{Owner: w.owner, Source: source, Type: typ, ParentID: parent, OccurredAt: at, Payload: p})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	return e
+}
+
+// reading is one texted weight, labeled and extracted.
+func (w world) reading(collection string, v float64, at time.Time) store.Event {
+	msg := w.add("twilio.sms", "message.received", "", at, map[string]string{"Body": "weight " + num(v)})
+	w.add(store.SourceAgent, store.TypeLabelApplied, msg.ID, at, store.LabelApplied{EventID: msg.ID, CollectionID: collection, DefinitionVersion: 1, Reason: "weight reading"})
+	w.add(store.SourceAgent, store.TypeMetricObserved, msg.ID, at, store.MetricObserved{CollectionID: collection, Value: &v})
+	return msg
+}
+
+func TestNeedsAUser(t *testing.T) {
+	h, st, _ := newServer(t)
+	if rec := do(t, h, "GET", "/", ""); rec.Code != 503 || !strings.Contains(rec.Body.String(), "users add") {
+		t.Fatalf("no users: %d %q", rec.Code, rec.Body.String())
+	}
+	st.AddUser(context.Background(), "a", "+1")
+	st.AddUser(context.Background(), "b", "+2")
+	if rec := do(t, h, "GET", "/inbox", ""); rec.Code != 503 {
+		t.Fatalf("two users without login: %d", rec.Code)
+	}
+}
+
+func TestMetricsPage(t *testing.T) {
+	h, st, _ := newServer(t)
+	u, _, _ := st.AddUser(context.Background(), "me", "+1")
+	w := world{t, st, u.ID}
+	if body := do(t, h, "GET", "/", "").Body.String(); !strings.Contains(body, "No metrics yet") {
+		t.Fatalf("empty page:\n%s", body)
+	}
+
+	now := time.Now()
+	weight := w.add(store.SourceAgent, store.TypeCollectionStarted, "", now.AddDate(0, 0, -20),
+		store.CollectionStarted{Name: "weight", Kind: store.KindMetric, Unit: "lb", Include: "weight readings"})
+	w.reading(weight.ID, 180, now.AddDate(0, 0, -16)) // older than two weeks
+	w.reading(weight.ID, 178, now.AddDate(0, 0, -8))  // last week: 178
+	w.reading(weight.ID, 176, now.AddDate(0, 0, -3))  // this week: 175
+	w.reading(weight.ID, 174, now.AddDate(0, 0, -1))
+
 	body := do(t, h, "GET", "/", "").Body.String()
-	for _, want := range []string{`<main id="items">`, `@get('/items/stream', {openWhenHidden: true})`, "Nothing yet", `data-bind:q`, `<div id="results"></div>`, `<div id="filter">`} {
+	for _, want := range []string{
+		`<main id="metrics">`,
+		`<chart-timeseries id="chart-` + weight.ID + `"`,
+		`unit="lb"`,
+		`<div class="value">174<span class="unit">lb</span>`,  // latest
+		`<div class="value">175<span class="unit">lb</span>`,  // 7-day average
+		`<div class="value">▼ -3<span class="unit">lb</span>`, // vs 178
+		`average="[[`,
+		`data-init="@get('/stream', {openWhenHidden: true})"`,
+	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	// Writes render nothing.
-	if rec := do(t, h, "POST", "/items", "title=Buy+milk"); rec.Code != 204 || rec.Body.Len() != 0 {
-		t.Fatalf("add: %d %q", rec.Code, rec.Body.String())
+	if strings.Contains(body, `points="[[`) == false {
+		t.Errorf("points attribute should carry JSON (escaped by html/template)")
 	}
-	if rec := do(t, h, "POST", "/items", "title="); rec.Code != 400 {
-		t.Errorf("empty title: %d", rec.Code)
+
+	// The stream repaints when a new reading lands.
+	got := patches(t, h, "/stream", 2, func() { w.reading(weight.ID, 172, now) })
+	if !strings.Contains(got[0], "174") || !strings.Contains(got[1], "172") {
+		t.Errorf("stream did not repaint with the new reading:\n%s", got[1])
 	}
-	items, _ := store.Items(context.Background())
-	if len(items) != 1 || items[0].Title != "Buy milk" {
-		t.Fatalf("items: %+v", items)
+}
+
+func TestInboxPage(t *testing.T) {
+	ctx := context.Background()
+	h, st, _ := newServer(t)
+	u, _, _ := st.AddUser(ctx, "me", "+1")
+	w := world{t, st, u.ID}
+	now := time.Now()
+	weight := w.add(store.SourceAgent, store.TypeCollectionStarted, "", now, store.CollectionStarted{Name: "weight", Kind: store.KindMetric, Unit: "lb", Include: "weight"})
+
+	filed := w.reading(weight.ID, 175, now)
+	unclear := w.add("twilio.sms", "message.received", "", now, map[string]string{"Body": "w 17"})
+	w.add(store.SourceAgent, "review.flagged", unclear.ID, now, map[string]string{"question": "Is 17 a weight?"})
+	ignored := w.add("cli", "note", "", now, map[string]string{"text": "<b>hello</b>"})
+	waiting := w.add("cli", "note", "", now, map[string]string{"text": "just sent"})
+	for _, e := range []store.Event{filed, unclear, ignored} {
+		st.MarkDelivered(ctx, e.ID)
 	}
-	id := items[0].ID
-	if rec := do(t, h, "POST", "/i/"+id+"/star", ""); rec.Code != 204 {
-		t.Fatalf("star: %d", rec.Code)
+	_ = waiting
+
+	body := do(t, h, "GET", "/inbox", "").Body.String()
+	for _, want := range []string{
+		`<tr class="filed">`, `<span class="chip" title="weight reading">weight</span>`, `<span class="chip">175 lb</span>`,
+		`<tr class="flagged">`, "⚠ Is 17 a weight?",
+		`<tr class="ignored">`, "&lt;b&gt;hello&lt;/b&gt;",
+		`<tr class="waiting">`, "waiting for agent",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q", want)
+		}
 	}
-	if rec := do(t, h, "PUT", "/i/"+id+"/note", `{"note":"2%\nnot <b>whole</b>"}`); rec.Code != 204 {
-		t.Fatalf("note: %d", rec.Code)
+	// Agent events are not inbox rows.
+	if strings.Count(body, "<tr class=") != 4 {
+		t.Errorf("want 4 rows, got %d", strings.Count(body, "<tr class="))
 	}
-	body = do(t, h, "GET", "/i/"+id, "").Body.String()
-	if !strings.Contains(body, "★") || !strings.Contains(body, "<div class=\"note-text\">2%\nnot &lt;b&gt;whole&lt;/b&gt;</div>") {
-		t.Errorf("item page:\n%s", body)
+}
+
+func TestSeriesAverage(t *testing.T) {
+	day := time.Date(2026, 10, 1, 7, 0, 0, 0, time.UTC)
+	var vals []store.MetricValue
+	for i, v := range []float64{10, 20, 30, 40, 50, 60, 70, 80, 90} {
+		vals = append(vals, store.MetricValue{Value: v, ObservedAt: day.AddDate(0, 0, i)})
 	}
-	if rec := do(t, h, "GET", "/i/nope", ""); rec.Code != 404 {
-		t.Errorf("unknown item: %d", rec.Code)
+	points, avg := series(vals)
+	if len(points) != 9 || points[0][1] != 10 {
+		t.Fatalf("points: %v", points)
 	}
-	// The stream's first patch carries the new state.
-	first := firstPatch(t, h, "/items/stream")
-	if !strings.Contains(first, "event: datastar-patch-elements") || !strings.Contains(first, "★") || !strings.Contains(first, "Buy milk") {
-		t.Errorf("stream patch:\n%s", first)
+	// Day 6 averages days 0-6; day 7 drops day 0 (exactly 7 days back).
+	if avg[0][1] != 10 || avg[6][1] != 40 || avg[7][1] != 50 || avg[8][1] != 60 {
+		t.Fatalf("trailing averages: %v", avg)
 	}
-	// Search patches the results slot.
-	rec := do(t, h, "GET", "/search?datastar="+url.QueryEscape(`{"q":"milk"}`), "")
-	if !strings.Contains(rec.Body.String(), `href="/i/`+id+`"`) {
-		t.Errorf("search:\n%s", rec.Body.String())
+	if m := mean(vals, day.AddDate(0, 0, 7), day.AddDate(0, 0, 9)); m == nil || *m != 85 {
+		t.Fatalf("mean of the last two: %v", m)
 	}
-	if rec := do(t, h, "GET", "/search?datastar="+url.QueryEscape(`{"q":"zzz"}`), ""); !strings.Contains(rec.Body.String(), "Nothing matches") {
-		t.Errorf("no match:\n%s", rec.Body.String())
-	}
-	// Starred-only filter hides unstarred items.
-	store.Put(context.Background(), state.Item{Title: "plain"})
-	do(t, h, "POST", "/prefs/starred", "")
-	body = do(t, h, "GET", "/", "").Body.String()
-	if strings.Contains(body, "plain") || !strings.Contains(body, "Buy milk") || !strings.Contains(body, `aria-pressed="true"`) {
-		t.Errorf("filter:\n%s", body)
-	}
-	// Delete.
-	if rec := do(t, h, "DELETE", "/i/"+id, ""); rec.Code != 204 {
-		t.Fatalf("delete: %d", rec.Code)
-	}
-	if _, ok, _ := store.Item(context.Background(), id); ok {
-		t.Error("item should be gone")
+	if m := mean(vals, day.AddDate(0, 0, 20), day.AddDate(0, 0, 27)); m != nil {
+		t.Fatalf("mean of nothing should be nil, got %v", *m)
 	}
 }
 
 func TestAdminDashboard(t *testing.T) {
-	h, _, sampler := newServer(t)
+	h, st, sampler := newServer(t)
+	st.AddUser(context.Background(), "me", "+1")
 	if rec := do(t, h, "GET", "/admin", ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), "No samples yet") {
 		t.Fatalf("empty dashboard: %d", rec.Code)
 	}
@@ -160,9 +233,9 @@ func TestAdminDashboard(t *testing.T) {
 	}
 }
 
-// firstPatch opens a stream and returns everything received in the first
-// event, then cancels the request so the handler returns.
-func firstPatch(t *testing.T, h http.Handler, path string) string {
+// patches opens a stream, collects n patch events, calling between() after
+// each one but the last, then cancels the request so the handler returns.
+func patches(t *testing.T, h http.Handler, path string, n int, between func()) []string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -173,18 +246,28 @@ func firstPatch(t *testing.T, h http.Handler, path string) string {
 		h.ServeHTTP(rec, req)
 		pw.Close()
 	}()
+	var out []string
 	var b strings.Builder
 	sc := bufio.NewScanner(pr)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	for sc.Scan() {
 		line := sc.Text()
 		b.WriteString(line + "\n")
 		if line == "" && strings.Contains(b.String(), "data: elements") {
-			break
+			out = append(out, b.String())
+			b.Reset()
+			if len(out) == n {
+				break
+			}
+			between()
 		}
 	}
 	cancel()
 	io.Copy(io.Discard, pr)
-	return b.String()
+	if len(out) < n {
+		t.Fatalf("got %d of %d patches from %s", len(out), n, path)
+	}
+	return out
 }
 
 type pipeWriter struct {
