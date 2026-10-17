@@ -280,3 +280,60 @@ func (p *pipeWriter) Header() http.Header         { return p.header }
 func (p *pipeWriter) Write(b []byte) (int, error) { return p.w.Write(b) }
 func (p *pipeWriter) WriteHeader(code int)        { p.status = code }
 func (p *pipeWriter) Flush()                      {}
+
+func TestCollectionsAndCorrections(t *testing.T) {
+	ctx := context.Background()
+	h, st, _ := newServer(t)
+	u, _, _ := st.AddUser(ctx, "me", "+1")
+	w := world{t, st, u.ID}
+	now := time.Now()
+	weight := w.add(store.SourceAgent, store.TypeCollectionStarted, "", now, store.CollectionStarted{Name: "weight", Kind: store.KindMetric, Unit: "lb", Include: "weight readings"})
+	w.add(store.SourceAgent, store.TypeCollectionAmended, "", now, store.CollectionAmended{CollectionID: weight.ID, Exclude: "the dog's weight"})
+	reading := w.reading(weight.ID, 175, now)
+	note := w.add("cli", "note", "", now, map[string]string{"text": "weighed in at the gym"})
+
+	body := do(t, h, "GET", "/collections", "").Body.String()
+	for _, want := range []string{`<a href="/c/` + weight.ID + `">weight</a>`, "● open", "v2", "− the dog&#39;s weight"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("collections page missing %q", want)
+		}
+	}
+	body = do(t, h, "GET", "/c/"+weight.ID, "").Body.String()
+	for _, want := range []string{"started: include weight readings", "exclude the dog&#39;s weight", "weight 175", `value="` + reading.ID + `"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("collection page missing %q", want)
+		}
+	}
+	if rec := do(t, h, "GET", "/c/nope", ""); rec.Code != 404 {
+		t.Errorf("unknown collection: %d", rec.Code)
+	}
+
+	// The owner removes the reading and adds the note; both are events the
+	// agent will receive.
+	if rec := do(t, h, "POST", "/c/"+weight.ID+"/remove", "event_id="+reading.ID); rec.Code != 204 {
+		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do(t, h, "POST", "/inbox/add", "event_id="+note.ID+"&collection_id="+weight.ID); rec.Code != 204 {
+		t.Fatalf("add: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do(t, h, "POST", "/inbox/add", "event_id=nope&collection_id="+weight.ID); rec.Code != 422 {
+		t.Fatalf("add unknown event: %d", rec.Code)
+	}
+	ms, _ := st.Members(ctx, weight.ID)
+	if len(ms) != 1 || ms[0].EventID != note.ID {
+		t.Fatalf("members after corrections: %+v", ms)
+	}
+	pending, _ := st.Undelivered(ctx, 100)
+	corrections := 0
+	for _, e := range pending {
+		if e.Type == store.TypeLabelCorrected && e.Source == SourceDashboard {
+			corrections++
+		}
+	}
+	if corrections != 2 {
+		t.Fatalf("want 2 label.corrected events queued for the agent, got %d", corrections)
+	}
+	if body := do(t, h, "GET", "/inbox", "").Body.String(); !strings.Contains(body, `<option value="`+weight.ID+`">weight</option>`) {
+		t.Errorf("inbox should offer open collections")
+	}
+}

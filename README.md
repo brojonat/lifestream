@@ -69,6 +69,8 @@ Public listener (`--addr`, what the ingress exposes):
 | `POST /events` | Generic JSON events, `Authorization: Bearer <user token>`. One object, a JSON array, or JSONL. |
 | `GET /` | Metrics: per metric collection, latest / 7-day average / change vs the week before, and a chart of readings with a trailing 7-day average (live over SSE) |
 | `GET /inbox` | The last 50 raw events and what each became (labels, values, flags); flagged ones highlighted |
+| `GET /collections`, `GET /c/{id}` | Collections; one collection's definition history (each version) and members |
+| `POST /c/{id}/remove`, `POST /inbox/add` | Owner corrections: append `label.corrected` (source `dashboard`), which goes to the agent like any raw event |
 | `GET /admin` | Process diagnostics |
 | `GET /healthz` | `ok` |
 | `GET /metrics` | Prometheus text format |

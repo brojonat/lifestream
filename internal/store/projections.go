@@ -536,3 +536,72 @@ func (s *Store) MetricValues(ctx context.Context, collectionID string, since tim
 	}
 	return out, rows.Err()
 }
+
+// CollectionHistory returns the events that shaped a collection's
+// definition (started, amended, stopped, resumed), oldest first.
+func (s *Store) CollectionHistory(ctx context.Context, id string) ([]Event, error) {
+	return s.queryEvents(ctx, selectEvent+` WHERE id = ?
+		OR (type IN (?, ?, ?) AND json_extract(payload, '$.collection_id') = ?) ORDER BY seq`,
+		id, TypeCollectionAmended, TypeCollectionStopped, TypeCollectionResumed, id)
+}
+
+// MemberEvent is a member with the event it refers to.
+type MemberEvent struct {
+	Member
+	Event Event
+}
+
+// MemberEvents returns a collection's members with their events, newest
+// event first, at most limit.
+func (s *Store) MemberEvents(ctx context.Context, collectionID string, limit int) ([]MemberEvent, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT m.definition_version, m.reason, m.label_event_id, m.labeled_at, e.seq, e.id, e.owner,
+		e.source, e.type, e.occurred_at, e.received_at, COALESCE(e.parent_id, ''), COALESCE(e.idempotency_key, ''), e.payload,
+		e.prev_hash, e.hash FROM collection_members m JOIN events e ON e.id = m.event_id
+		WHERE m.collection_id = ? ORDER BY e.seq DESC LIMIT ?`, collectionID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing member events: %w", err)
+	}
+	defer rows.Close()
+	var out []MemberEvent
+	for rows.Next() {
+		var m MemberEvent
+		var labeled, occurred, received, payload string
+		e := &m.Event
+		if err := rows.Scan(&m.DefinitionVersion, &m.Reason, &m.LabelEventID, &labeled, &e.Seq, &e.ID, &e.Owner,
+			&e.Source, &e.Type, &occurred, &received, &e.ParentID, &e.IdempotencyKey, &payload, &e.PrevHash, &e.Hash); err != nil {
+			return nil, fmt.Errorf("listing member events: %w", err)
+		}
+		m.CollectionID, m.EventID, e.Payload = collectionID, e.ID, []byte(payload)
+		if m.LabeledAt, err = parseTime(labeled); err != nil {
+			return nil, err
+		}
+		if e.OccurredAt, err = parseTime(occurred); err != nil {
+			return nil, err
+		}
+		if e.ReceivedAt, err = parseTime(received); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// MemberCounts returns how many members each of an owner's collections has.
+func (s *Store) MemberCounts(ctx context.Context, owner string) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT m.collection_id, count(*) FROM collection_members m
+		JOIN collections c ON c.id = m.collection_id WHERE c.owner = ? GROUP BY m.collection_id`, owner)
+	if err != nil {
+		return nil, fmt.Errorf("counting members: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, fmt.Errorf("counting members: %w", err)
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}

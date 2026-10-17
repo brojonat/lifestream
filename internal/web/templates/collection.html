@@ -1,0 +1,32 @@
+{{define "region"}}<main id="collection">
+<p class="muted"><a href="/collections">← collections</a></p>
+<div class="row"><h2>{{.C.Name}}</h2>
+  <span class="status">{{if eq .C.Status "open"}}● open{{else}}○ stopped{{end}}</span>
+  <span class="muted">{{.C.Kind}}{{with .C.Unit}} in {{.}}{{end}} · version {{.C.Version}} · {{.Total}} members</span></div>
+
+<h3>Definition</h3>
+<ol class="history">
+{{range .History}}<li><span class="muted">v{{.Version}} · {{.At | ago}}</span>
+  {{if eq .What "started"}}started: include {{.Text}}
+  {{else if eq .What "include"}}<b>+</b> include {{.Text}}
+  {{else if eq .What "exclude"}}<b>−</b> exclude {{.Text}}
+  {{else}}{{.What}}{{end}}</li>
+{{end}}</ol>
+
+<h3>Members</h3>
+{{if not .Members}}<p class="empty">No members yet.</p>
+{{else}}<table class="inbox">
+<thead><tr><th>When</th><th>Event</th><th>Why</th><th></th></tr></thead>
+<tbody>
+{{range .Members}}<tr>
+  <td class="when">{{.At | ago}}</td>
+  <td class="text">{{trunc 200 .Text}}</td>
+  <td class="became"><span class="muted">v{{.Version}}:</span> {{.Reason}}</td>
+  <td class="state"><form data-on:submit="@post('/c/{{$.C.ID}}/remove', {contentType: 'form'})">
+    <input type="hidden" name="event_id" value="{{.EventID}}">
+    <button class="quiet" type="submit" title="remove from {{$.C.Name}}; the agent is told">remove</button></form></td>
+</tr>
+{{end}}</tbody>
+</table>{{if gt .Total (len .Members)}}<p class="muted">Showing the newest {{len .Members}} of {{.Total}}.</p>{{end}}{{end}}
+</main>
+{{end}}

@@ -1,0 +1,17 @@
+{{define "region"}}<main id="collections">
+<div class="row"><h2>Collections</h2><span class="muted">start one by texting “start capturing for …”</span></div>
+{{if not .Collections}}<p class="empty">No collections yet.</p>
+{{else}}<table>
+<thead><tr><th>Name</th><th>Kind</th><th class="num">Members</th><th>Status</th><th>Rules</th></tr></thead>
+<tbody>
+{{range .Collections}}<tr>
+  <td><a href="/c/{{.ID}}">{{.Name}}</a></td>
+  <td>{{.Kind}}{{with .Unit}} <span class="muted">({{.}})</span>{{end}}</td>
+  <td class="num">{{.Members}}</td>
+  <td><span class="status">{{if eq .Status "open"}}● open{{else}}○ stopped{{end}}</span> <span class="muted">v{{.Version}}</span></td>
+  <td>{{range .Rules}}<div class="muted">{{if eq .Kind "exclude"}}− {{else}}+ {{end}}{{.Text}}</div>{{end}}</td>
+</tr>
+{{end}}</tbody>
+</table>{{end}}
+</main>
+{{end}}

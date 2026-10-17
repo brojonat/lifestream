@@ -61,6 +61,17 @@
   .chip { display: inline-block; font-size: .85rem; padding: 0 .45rem; margin: 0 .25rem .2rem 0; border-radius: 4px;
           background: color-mix(in srgb, var(--cat-1) 14%, transparent); }
   .text { white-space: pre-wrap; word-break: break-word; }
+  h3 { font-size: 1rem; margin: 1.25rem 0 .4rem; }
+  a { color: inherit; }
+  ol.history { padding-left: 1.25rem; margin: 0; }
+  ol.history li { margin: .2rem 0; }
+  button.quiet, details.add summary { font-size: .85rem; padding: .1rem .55rem; border-radius: 6px; cursor: pointer; color: inherit;
+    background: transparent; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
+  details.add { display: inline-block; margin: 0; }
+  details.add summary { display: inline-block; list-style: none; }
+  details.add form { display: flex; gap: .4rem; margin-top: .35rem; }
+  details.add select { padding: .15rem .3rem; border-radius: 6px; background: transparent; color: inherit;
+    border: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
   @media (max-width: 640px) {
     table.inbox thead { display: none; }
     table.inbox tr { display: grid; grid-template-columns: 1fr auto; gap: .25rem .75rem; padding: .6rem .5rem;
@@ -100,6 +111,7 @@
   <nav>
     <a href="/" {{if eq .Nav "metrics"}}aria-current="page"{{end}}>metrics</a>
     <a href="/inbox" {{if eq .Nav "inbox"}}aria-current="page"{{end}}>inbox</a>
+    <a href="/collections" {{if eq .Nav "collections"}}aria-current="page"{{end}}>collections</a>
     <a href="/admin" {{if eq .Nav "admin"}}aria-current="page"{{end}}>diagnostics</a>
   </nav>
 </header>

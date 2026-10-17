@@ -216,3 +216,28 @@ func TestParentMustBelongToOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCollectionHistoryAndMembers(t *testing.T) {
+	ctx := context.Background()
+	f, ids := weightStory(t)
+	hist, err := f.s.CollectionHistory(ctx, ids["weight"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var types []string
+	for _, e := range hist {
+		types = append(types, e.Type)
+	}
+	want := []string{TypeCollectionStarted, TypeCollectionAmended, TypeCollectionAmended}
+	if !reflect.DeepEqual(types, want) {
+		t.Fatalf("history %v, want %v", types, want)
+	}
+	ms, err := f.s.MemberEvents(ctx, ids["weight"], 10)
+	if err != nil || len(ms) != 2 || ms[0].Event.ID != ids["m2"] || ms[1].Event.ID != ids["m0"] {
+		t.Fatalf("member events: %v %+v", err, ms)
+	}
+	counts, _ := f.s.MemberCounts(ctx, f.owner)
+	if counts[ids["weight"]] != 2 || counts[ids["notes"]] != 1 {
+		t.Fatalf("counts: %v", counts)
+	}
+}
