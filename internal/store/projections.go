@@ -19,6 +19,7 @@ const (
 	TypeCollectionResumed = "collection.resumed"
 	TypeLabelApplied      = "label.applied"
 	TypeLabelCorrected    = "label.corrected"
+	TypeLabelRemoved      = "label.removed"
 	TypeMetricObserved    = "metric.observed"
 	TypeRuleAdded         = "rule.added"
 	TypeRuleRemoved       = "rule.removed"
@@ -52,6 +53,14 @@ type (
 		CollectionID string `json:"collection_id"`
 	}
 	LabelApplied struct {
+		EventID           string `json:"event_id"`
+		CollectionID      string `json:"collection_id"`
+		DefinitionVersion int    `json:"definition_version"`
+		Reason            string `json:"reason"`
+	}
+	// LabelRemoved is the agent taking an event out of a collection, e.g.
+	// after an exclude rule (the owner's equivalent is LabelCorrected).
+	LabelRemoved struct {
 		EventID           string `json:"event_id"`
 		CollectionID      string `json:"collection_id"`
 		DefinitionVersion int    `json:"definition_version"`
@@ -246,6 +255,26 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 			return err
 		}
 		return upsertMember(ctx, tx, c.ID, p.EventID, p.DefinitionVersion, p.Reason, e)
+
+	case TypeLabelRemoved:
+		var p LabelRemoved
+		if err := decode(e, &p); err != nil {
+			return err
+		}
+		c, err := collectionTx(ctx, tx, e.Owner, p.CollectionID)
+		if err != nil {
+			return err
+		}
+		if p.DefinitionVersion < 1 || p.DefinitionVersion > c.Version {
+			return invalid("definition_version %d is not a version of collection %s (current %d)", p.DefinitionVersion, c.ID, c.Version)
+		}
+		res, err := tx.ExecContext(ctx, `DELETE FROM collection_members WHERE collection_id = ? AND event_id = ?`, c.ID, p.EventID)
+		if err != nil {
+			return fmt.Errorf("projecting %s: %w", e.Type, err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return invalid("event %s is not in collection %s", p.EventID, c.ID)
+		}
 
 	case TypeLabelCorrected:
 		var p LabelCorrected

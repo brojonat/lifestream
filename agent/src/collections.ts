@@ -5,8 +5,9 @@
 
 import type { Context } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
-import { type ConversationId, defineDoc, defineExtension, defineTool, section } from "@earendil-works/pi-durable";
+import { type ConversationId, defineDoc, defineExtension, defineTool, section, type ToolExecutionApi } from "@earendil-works/pi-durable";
 import { ApiError, type Collection, type GoApi } from "./goapi.ts";
+import { DEFAULT_LOOKBACK_DAYS, type LookBackOptions, lookBackTask } from "./lookback.ts";
 
 /** Which owner a conversation belongs to. Written when the conversation is created. */
 export const OwnerDoc = defineDoc<{ owner: string }>({
@@ -43,6 +44,8 @@ Each user message is one event from the owner's event store: an SMS, a note, a c
 7. collection.* events from the dashboard are changes the owner already made, often undoing one of yours. They are applied: don't repeat or reverse them, but don't make the same change again either.
 8. If the owner teaches you something ("w means weight", "never sell anything from ~/work"), make it durable with add_rule. Background work and future conversations only see what is written down. Follow every entry in <owner_rules>.
 
+Starting a collection or adding an include automatically labels the last 7 days of events in the background (pass lookback_days if the owner asks for another window); an exclude re-checks current members. A "Look-back ... finished" message is that job reporting; nothing to do.
+
 Large payloads arrive as a pointer; call read_event to see the content when the title isn't enough.
 
 Reply with at most one short line summarizing what you did.`;
@@ -57,20 +60,29 @@ export function collectionsSection(c: Collection): string {
 export const text = (s: string) => ({ output: [{ type: "text" as const, text: s }] });
 export const fail = (s: string) => ({ ...text(s), isError: true });
 
-/** Builds the extension. `api` is the Go client; nothing else is shared. */
-export function collectionsExtension(api: GoApi) {
+/** Builds the extension. `api` is the Go client; `lookBack` tunes the look-back task (tests). */
+export function collectionsExtension(api: GoApi, opts: { lookBack?: LookBackOptions } = {}) {
+	const LookBack = lookBackTask(api, opts.lookBack);
 	// Every write: owner from the conversation, idempotency key from the tool
 	// task (stable when a replay-safe tool reruns after a crash).
+	// Starts the look-back over the last N days (or a re-check of members).
+	const lookBack = (tapi: ToolExecutionApi, ctx: Context, collectionId: string, mode: "include" | "exclude", days: number | undefined, triggerEventId: string) => {
+		const since = new Date(Date.now() - (days ?? DEFAULT_LOOKBACK_DAYS) * 86400_000).toISOString();
+		return async (owner: string) =>
+			days === 0 ? undefined : tapi.createTask(LookBack, { owner, collectionId, mode, since, triggerEventId }, { ownership: { kind: "conversation" }, background: true }, ctx);
+	};
 	const write = async (
 		tapi: { taskId: unknown; conversationId: ConversationId },
 		ctx: Context,
 		type: string,
 		payload: unknown,
 		parentId?: string,
+		after?: (owner: string, id: string) => Promise<unknown>,
 	) => {
 		try {
 			const owner = await ownerOf(tapi, tapi.conversationId, ctx);
 			const e = await api.append(owner, type, payload, { parentId, idempotencyKey: `tool:${String(tapi.taskId)}` });
+			await after?.(owner, e.id);
 			return text(`ok: ${type} ${e.id}`);
 		} catch (err) {
 			if (err instanceof ApiError && err.status < 500) return fail(`rejected: ${err.message}`);
@@ -87,11 +99,12 @@ export function collectionsExtension(api: GoApi) {
 			include: Type.String({ description: "plain-English rule for what belongs" }),
 			kind: Type.Optional(Type.Union([Type.Literal("set"), Type.Literal("metric")])),
 			unit: Type.Optional(Type.String()),
-			lookback_days: Type.Optional(Type.Integer({ minimum: 0 })),
+			lookback_days: Type.Optional(Type.Integer({ minimum: 0, description: "how far back to label existing events; default 7, 0 for none, or what the owner asked for" })),
 		}),
 		replay: "safe",
 		execute: (a, tapi, ctx) =>
-			write(tapi, ctx, "collection.started", { name: a.name, include: a.include, kind: a.kind, unit: a.unit, lookback_days: a.lookback_days }, a.event_id),
+			write(tapi, ctx, "collection.started", { name: a.name, include: a.include, kind: a.kind, unit: a.unit, lookback_days: a.lookback_days }, a.event_id,
+				(owner, id) => lookBack(tapi, ctx, id, "include", a.lookback_days, a.event_id)(owner)),
 	});
 
 	const amendCollection = defineTool({
@@ -102,10 +115,12 @@ export function collectionsExtension(api: GoApi) {
 			collection_id: Type.String(),
 			include: Type.Optional(Type.String()),
 			exclude: Type.Optional(Type.String()),
+			lookback_days: Type.Optional(Type.Integer({ minimum: 0, description: "for an include: how far back to label; default 7" })),
 		}),
 		replay: "safe",
 		execute: (a, tapi, ctx) =>
-			write(tapi, ctx, "collection.amended", { collection_id: a.collection_id, include: a.include, exclude: a.exclude }, a.event_id),
+			write(tapi, ctx, "collection.amended", { collection_id: a.collection_id, include: a.include, exclude: a.exclude }, a.event_id,
+				(owner) => lookBack(tapi, ctx, a.collection_id, a.exclude ? "exclude" : "include", a.lookback_days, a.event_id)(owner)),
 	});
 
 	const statusTool = (name: string, type: string, description: string) =>
@@ -176,6 +191,7 @@ export function collectionsExtension(api: GoApi) {
 
 	return defineExtension({
 		name: "collections",
+		tasks: [LookBack],
 		tools: [
 			createCollection,
 			amendCollection,

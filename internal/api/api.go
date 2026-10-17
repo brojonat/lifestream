@@ -21,6 +21,7 @@ var DerivedTypes = map[string]bool{
 	store.TypeCollectionStopped: true,
 	store.TypeCollectionResumed: true,
 	store.TypeLabelApplied:      true,
+	store.TypeLabelRemoved:      true,
 	store.TypeMetricObserved:    true,
 	store.TypeRuleAdded:         true, // removing one is the owner's call, on the dashboard
 	"review.flagged":            true,

@@ -96,7 +96,7 @@ side of the contract):
 | `GET /healthz` | `ok` |
 
 The agent may append `collection.started|amended|stopped|resumed`,
-`label.applied`, `metric.observed`, `rule.added`, `review.flagged` and
+`label.applied`, `label.removed`, `metric.observed`, `rule.added`, `review.flagged` and
 `redaction.created`. Payload shapes are the structs in
 `internal/store/projections.go`; a collection's id is the id of its
 `collection.started` event.
@@ -137,7 +137,12 @@ One conversation per owner. Each event is submitted with its id as
 derived events through Go's API; sections `role` and `collections`, the
 open definitions) and `rules` (`add_rule`; section `owner_rules`, the rules
 doc). Sections are fetched before every model request and rendered
-deterministically, so the prompt cache only breaks when they change. Tests use pi-ai's faux provider;
+deterministically, so the prompt cache only breaks when they change.
+Starting a collection or adding an include runs a look-back: a background
+task (`lifestream.lookback`) that labels the last 7 days (`lookback_days`
+overrides; 0 skips) in batches of 20, one model call per batch,
+checkpointing as it goes and retrying with backoff before giving up. An
+exclude re-checks current members and emits `label.removed`. Tests use pi-ai's faux provider;
 `test/e2e.test.ts` drives the real Go binary.
 
 ## Deploy

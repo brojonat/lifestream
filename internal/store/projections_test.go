@@ -293,3 +293,15 @@ func TestRemoveRuleAndFlags(t *testing.T) {
 		t.Fatalf("answered flag still open: %v", open)
 	}
 }
+
+func TestLabelRemoved(t *testing.T) {
+	ctx := context.Background()
+	f, ids := weightStory(t)
+	w := ids["weight"]
+	f.mustReject(TypeLabelRemoved, LabelRemoved{EventID: ids["m1"], CollectionID: w, DefinitionVersion: 3}) // not a member
+	f.mustReject(TypeLabelRemoved, LabelRemoved{EventID: ids["m0"], CollectionID: w, DefinitionVersion: 99})
+	f.must(TypeLabelRemoved, ids["m0"], LabelRemoved{EventID: ids["m0"], CollectionID: w, DefinitionVersion: 3, Reason: "the dog's weight"})
+	if ms, _ := f.s.Members(ctx, w); len(ms) != 1 || ms[0].EventID != ids["m2"] {
+		t.Fatalf("members: %+v", ms)
+	}
+}

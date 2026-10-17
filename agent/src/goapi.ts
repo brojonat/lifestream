@@ -18,6 +18,7 @@ export type Collection = {
 export type OwnerRule = { id: string; text: string; source: string };
 
 export type StoredEvent = {
+	seq?: number;
 	id: string;
 	owner: string;
 	source: string;
@@ -55,6 +56,24 @@ export class GoApi {
 	async rules(owner: string): Promise<OwnerRule[]> {
 		const body = (await this.#request("GET", `/api/rules?${new URLSearchParams({ owner })}`)) as { rules: OwnerRule[] };
 		return body.rules;
+	}
+
+	/** Events that occurred at or after `since`, in log order after seq `after`. Big payloads come back null. */
+	async events(owner: string, opts: { since?: string; after?: number; limit?: number; maxPayload?: number }): Promise<(StoredEvent & { payload_size: number })[]> {
+		const q = new URLSearchParams({ owner });
+		if (opts.since) q.set("since", opts.since);
+		if (opts.after) q.set("after", String(opts.after));
+		if (opts.limit) q.set("limit", String(opts.limit));
+		if (opts.maxPayload) q.set("max_payload", String(opts.maxPayload));
+		const body = (await this.#request("GET", `/api/events?${q}`)) as { events: (StoredEvent & { payload_size: number })[] };
+		return body.events;
+	}
+
+	async members(collectionId: string): Promise<{ event_id: string; definition_version: number }[]> {
+		const body = (await this.#request("GET", `/api/collections/${encodeURIComponent(collectionId)}/members`)) as {
+			members: { event_id: string; definition_version: number }[];
+		};
+		return body.members;
 	}
 
 	/** One event; with offset/limit, a byte range of its payload as `data`. */
