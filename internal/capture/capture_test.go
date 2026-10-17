@@ -296,3 +296,28 @@ func TestPiSession(t *testing.T) {
 		t.Fatalf("assistant event: %+v %+v", evs[1], p)
 	}
 }
+
+func TestCodexRolloutFoundByThreadID(t *testing.T) {
+	g := newRig(t)
+	home := t.TempDir()
+	day := filepath.Join(home, "sessions", "2026", "10", "17")
+	os.MkdirAll(day, 0o700)
+	os.WriteFile(filepath.Join(day, "rollout-2026-10-17T17-00-00-019f-fixture.jsonl"), mustRead(t, "../../testdata/codex/rollout.jsonl"), 0o600)
+	notify := mustRead(t, "../../testdata/codex/notify.json")
+	res, err := Run(context.Background(), g.cfg, Codex(home), notify)
+	if err != nil || res.Sent != 4 {
+		t.Fatalf("run: %+v %v", res, err)
+	}
+	evs := g.messages()
+	if got := sequences(t, evs); !slices.Equal(got, []int64{2, 4, 5, 6}) {
+		t.Fatalf("sequences %v: want the four response_item lines", got)
+	}
+	var p sent
+	json.Unmarshal(evs[0].Payload, &p)
+	if evs[0].Source != "codex" || p.SessionID != "019f-fixture" || p.Model != "gpt-6-luna" || p.Cwd != "/home/me/src/pgmig" {
+		t.Fatalf("event: %+v payload %+v", evs[0], p)
+	}
+	if _, err := Run(context.Background(), g.cfg, Codex(home), []byte(`{"type":"agent-turn-complete","thread-id":"nope"}`)); err == nil {
+		t.Fatal("an unknown thread should fail")
+	}
+}

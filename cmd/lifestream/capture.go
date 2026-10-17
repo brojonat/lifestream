@@ -18,15 +18,16 @@ import (
 
 func captureCommand() *cli.Command {
 	names := make([]string, 0)
-	for name := range capture.Harnesses() {
+	for name := range capture.Harnesses("") {
 		names = append(names, name)
 	}
 	slices.Sort(names)
 	return &cli.Command{
 		Name:      "capture",
 		Usage:     "Send a harness transcript's new lines as llm.message events (run from the harness's hook)",
-		UsageText: "lifestream capture <harness> < hook.json    # harnesses: " + strings.Join(names, ", "),
-		Description: `Reads the hook's JSON on stdin, then the transcript from the offset saved
+		UsageText: "lifestream capture <harness> [hook-json] < hook.json    # harnesses: " + strings.Join(names, ", "),
+		Description: `Reads the hook's JSON (from stdin, or the argument after the harness, which
+is how Codex's notify program passes it), then the transcript from the offset saved
 for the session, sends the new complete lines, and saves the new offset
 once the service has them. Does nothing unless LIFESTREAM_CAPTURE=on, and
 nothing for a cwd under a LIFESTREAM_DENY glob (colon-separated, ~ allowed).
@@ -40,19 +41,35 @@ last success.`,
 			&cli.StringFlag{Name: "capture", Sources: cli.EnvVars("LIFESTREAM_CAPTURE"), Usage: "`on` to capture; anything else captures nothing"},
 			&cli.StringFlag{Name: "deny", Sources: cli.EnvVars("LIFESTREAM_DENY"), Usage: "colon-separated path `GLOBS` never to capture"},
 			&cli.StringFlag{Name: "state-dir", Usage: "where offsets live (default $XDG_STATE_HOME/lifestream/capture)"},
+			&cli.StringFlag{Name: "codex-home", Sources: cli.EnvVars("CODEX_HOME"), Usage: "Codex's `DIR`, for finding rollouts (default ~/.codex)"},
 			&cli.DurationFlag{Name: "timeout", Value: 10 * time.Second, Usage: "per request; hooks wait for this command"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			h, ok := capture.Harnesses()[cmd.Args().First()]
-			if !ok {
-				return fmt.Errorf("capture: want one harness argument, one of %s", strings.Join(names, ", "))
+			codexHome := cmd.String("codex-home")
+			if codexHome == "" {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return fmt.Errorf("capture: finding ~/.codex: %w", err)
+				}
+				codexHome = filepath.Join(home, ".codex")
 			}
-			stdin, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
-			if err != nil {
-				return fmt.Errorf("capture: reading stdin: %w", err)
+			h, ok := capture.Harnesses(codexHome)[cmd.Args().First()]
+			if !ok || cmd.Args().Len() > 2 {
+				return fmt.Errorf("capture: want a harness (one of %s) and at most one hook-json argument", strings.Join(names, ", "))
+			}
+			var input []byte
+			if cmd.Args().Len() == 2 {
+				input = []byte(cmd.Args().Get(1))
+			} else {
+				stdin, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+				if err != nil {
+					return fmt.Errorf("capture: reading stdin: %w", err)
+				}
+				input = stdin
 			}
 			stateDir := cmd.String("state-dir")
 			if stateDir == "" {
+				var err error
 				if stateDir, err = defaultStateDir(); err != nil {
 					return err
 				}
@@ -67,7 +84,7 @@ last success.`,
 			if d := cmd.String("deny"); d != "" {
 				cfg.Deny = strings.Split(d, ":")
 			}
-			_, err = capture.Run(ctx, cfg, h, stdin)
+			_, err := capture.Run(ctx, cfg, h, input)
 			var te *capture.TransportError
 			if errors.As(err, &te) {
 				fmt.Fprintln(os.Stderr, "lifestream capture: will retry next turn:", err)

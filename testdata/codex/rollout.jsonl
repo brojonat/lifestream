@@ -1,0 +1,8 @@
+{"type":"session_meta","timestamp":"2026-10-17T17:00:00.000Z","payload":{"id":"019f-fixture","timestamp":"2026-10-17T17:00:00.000Z","cwd":"/home/me/src/pgmig","originator":"codex_cli_rs","cli_version":"0.56.0","instructions":"(system instructions)","source":"cli","model_provider":"openai"}}
+{"type":"turn_context","timestamp":"2026-10-17T17:00:01.000Z","payload":{"cwd":"/home/me/src/pgmig","approval_policy":"on-request","sandbox_policy":{"mode":"workspace-write"},"model":"gpt-6-luna","summary":"auto"}}
+{"type":"response_item","timestamp":"2026-10-17T17:00:01.100Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"upgrade postgres to 17"}]}}
+{"type":"event_msg","timestamp":"2026-10-17T17:00:01.100Z","payload":{"type":"user_message","message":"upgrade postgres to 17","images":[]}}
+{"type":"response_item","timestamp":"2026-10-17T17:00:04.000Z","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"pg_upgrade\",\"--check\"]}","call_id":"call_1"}}
+{"type":"response_item","timestamp":"2026-10-17T17:00:06.000Z","payload":{"type":"function_call_output","call_id":"call_1","output":"Clusters are compatible"}}
+{"type":"response_item","timestamp":"2026-10-17T17:00:09.000Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Compatible. Running the upgrade."}]}}
+{"type":"event_msg","timestamp":"2026-10-17T17:00:09.000Z","payload":{"type":"agent_message","message":"Compatible. Running the upgrade."}}

@@ -54,7 +54,7 @@ lifestream users ls              # JSONL
 echo '{"type":"note","payload":{"text":"hi"}}' | lifestream push
                                  # POST JSON events from stdin to $LIFESTREAM_URL
 lifestream capture claude-code < hook.json
-                                 # from a harness hook: send the transcript's new lines (claude-code, pi)
+                                 # from a harness hook: send the transcript's new lines (claude-code, pi, codex)
 lifestream rebuild               # drop and rebuild every projection from events
 lifestream verify                # check every owner's hash chain
 ```
@@ -153,6 +153,17 @@ session file. Only `message` entries are sent. To install:
 cp capture/pi/lifestream.ts ~/.pi/agent/extensions/
 ```
 
+Codex runs a notify program at the end of every turn, passing JSON with
+the thread id as its last argument. Capture finds the rollout file under
+`$CODEX_HOME/sessions/` (default `~/.codex`) and sends its `response_item`
+lines: messages, tool calls, tool output and reasoning. `session_meta`,
+which holds the system instructions, is not sent. In `~/.codex/config.toml`
+(Codex runs only one notify program, so this replaces any you have):
+
+```
+notify = ["lifestream", "capture", "codex"]
+```
+
 Nothing is captured until `LIFESTREAM_CAPTURE=on`: set it in a project's
 `mise.toml` `[env]` for that project, or in your shell profile for all of
 them. `LIFESTREAM_DENY` wins even when capture is on.
@@ -174,6 +185,7 @@ Environment variables only (mise loads `.env` if present; never commit it).
 | `LIFESTREAM_CAPTURE` | capture | `on` to capture; unset or anything else sends nothing |
 | `LIFESTREAM_DENY` | capture | Colon-separated path globs (`~` allowed) never captured; matches `cwd` or any parent |
 | `XDG_STATE_HOME` | capture | Where capture offsets live (default `~/.local/state`) |
+| `CODEX_HOME` | capture | Where Codex keeps its rollouts (default `~/.codex`) |
 | `LOG_LEVEL` | all | `debug`, `info`, `warn`, `error` |
 | `LOG_FORMAT` | all | `json` for machine-readable logs |
 
@@ -255,6 +267,7 @@ agent/test/          faux-model tests, scanner tests, and the end-to-end test
 testdata/secrets.json  fake secrets shared by every scanner (agent now, capture adapters later)
 testdata/claude-code/  a synthetic Claude Code transcript and hook inputs
 testdata/pi/           a synthetic pi session file
+testdata/codex/        a synthetic Codex rollout and notify payload
 capture/claude-code/   the Claude Code plugin (Stop and SessionEnd hooks); .claude-plugin/ is its marketplace
 capture/pi/            the pi extension (turn_end, session_shutdown); tested from agent/test
 deploy/              deploy.sh and k8s/ (kustomize; Deployment, PVC, Service, Ingress, Litestream config)

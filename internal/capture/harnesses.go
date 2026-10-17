@@ -13,7 +13,7 @@ import (
 var ClaudeCode = Harness{
 	Name: "claude-code",
 	Hook: jsonHook,
-	Line: func(line []byte) (Line, bool) {
+	Parser: stateless(func(line []byte) (Line, bool) {
 		var l struct {
 			Type      string    `json:"type"`
 			Timestamp time.Time `json:"timestamp"`
@@ -29,7 +29,7 @@ var ClaudeCode = Harness{
 			return Line{Model: l.Message.Model, OccurredAt: l.Timestamp}, true
 		}
 		return Line{}, false
-	},
+	}),
 }
 
 // Pi tails pi's session file. pi has no command hooks; its extension
@@ -40,7 +40,7 @@ var ClaudeCode = Harness{
 var Pi = Harness{
 	Name: "pi",
 	Hook: jsonHook,
-	Line: func(line []byte) (Line, bool) {
+	Parser: stateless(func(line []byte) (Line, bool) {
 		var l struct {
 			Type      string    `json:"type"`
 			Timestamp time.Time `json:"timestamp"`
@@ -52,7 +52,11 @@ var Pi = Harness{
 			return Line{}, false
 		}
 		return Line{Model: l.Message.Model, OccurredAt: l.Timestamp}, true
-	},
+	}),
+}
+
+func stateless(f func([]byte) (Line, bool)) func() func([]byte) (Line, bool) {
+	return func() func([]byte) (Line, bool) { return f }
 }
 
 // jsonHook reads {session_id, transcript_path, cwd}.
@@ -69,6 +73,8 @@ func jsonHook(stdin []byte) (Hook, error) {
 }
 
 // Harnesses are the transcript tailers `lifestream capture` knows.
-func Harnesses() map[string]Harness {
-	return map[string]Harness{ClaudeCode.Name: ClaudeCode, Pi.Name: Pi}
+// codexHome is $CODEX_HOME (default ~/.codex).
+func Harnesses(codexHome string) map[string]Harness {
+	codex := Codex(codexHome)
+	return map[string]Harness{ClaudeCode.Name: ClaudeCode, Pi.Name: Pi, codex.Name: codex}
 }

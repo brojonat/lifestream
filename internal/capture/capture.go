@@ -29,9 +29,11 @@ type Harness struct {
 	Name string
 	// Hook reads the hook's stdin.
 	Hook func(stdin []byte) (Hook, error)
-	// Line inspects one transcript line. ok == false skips it (bookkeeping
-	// the harness writes for itself); its line number is still used up.
-	Line func(line []byte) (l Line, ok bool)
+	// Parser returns a fresh line parser for one run. It inspects one
+	// transcript line; ok == false skips it (bookkeeping the harness writes
+	// for itself), and its line number is still used up. It may keep state
+	// across lines (Codex names the model once per turn).
+	Parser func() func(line []byte) (l Line, ok bool)
 }
 
 // Hook is what every harness's hook input boils down to.
@@ -152,6 +154,7 @@ func Run(ctx context.Context, cfg Config, h Harness, stdin []byte) (Result, erro
 		batch.Reset()
 		return nil
 	}
+	parse := h.Parser()
 	r := bufio.NewReaderSize(f, 64<<10)
 	cur := st // position after every line examined so far
 	for {
@@ -164,7 +167,7 @@ func Run(ctx context.Context, cfg Config, h Harness, stdin []byte) (Result, erro
 		}
 		seq, after := cur.Line, state{Offset: cur.Offset + int64(len(raw)), Line: cur.Line + 1}
 		line := bytes.TrimRight(raw, "\r\n")
-		info, ok := h.Line(line)
+		info, ok := parse(line)
 		if !ok || len(line) > cfg.MaxLine || !json.Valid(line) {
 			cur = after
 			continue
