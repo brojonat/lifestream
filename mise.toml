@@ -3,26 +3,27 @@ claude = "latest"
 claude-code = "latest"
 go = "1.27"
 node = "25"
+uv = "latest"
 
 [env]
 _.file = { path = ".env", redact = false }
 
 [tasks.setup]
-description = "Resolve Go and agent deps, install dev tools (air)"
-run = ["go mod tidy", "go install github.com/air-verse/air@latest", "cd agent && npm ci"]
+description = "Resolve Go, agent and Strands-adapter deps, install dev tools (air)"
+run = ["go mod tidy", "go install github.com/air-verse/air@latest", "cd agent && npm ci", "cd capture/strands && uv sync"]
 
 [tasks.build]
 description = "Build ./bin/lifestream"
 run = 'go build -ldflags "-X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" -o bin/lifestream ./cmd/lifestream'
 
 [tasks.test]
-description = "Go tests, then agent tests (faux model; e2e against bin/lifestream)"
+description = "Go tests, agent tests (faux model; e2e against bin/lifestream), Strands adapter tests"
 depends = ["build"]
-run = ["go test ./...", "cd agent && npm test"]
+run = ["go test ./...", "cd agent && npm test", "cd capture/strands && uv run pytest -q"]
 
 [tasks.lint]
-description = "gofmt check, go vet, agent typecheck"
-run = ['test -z "$(gofmt -l cmd internal)" || { gofmt -l cmd internal; exit 1; }', "go vet ./...", "cd agent && npx tsc"]
+description = "gofmt check, go vet, agent typecheck, ruff on the Strands adapter"
+run = ['test -z "$(gofmt -l cmd internal)" || { gofmt -l cmd internal; exit 1; }', "go vet ./...", "cd agent && npx tsc", "cd capture/strands && uvx ruff check . && uvx ruff format --check ."]
 
 [tasks.dev]
 description = "Serve with hot reload (air), tee to logs/serve.log"

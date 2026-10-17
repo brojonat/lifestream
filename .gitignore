@@ -8,3 +8,7 @@
 node_modules/
 /.agents/
 /.claude/skills/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/

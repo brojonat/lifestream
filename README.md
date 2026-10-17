@@ -171,6 +171,21 @@ which holds the system instructions, is not sent. In `~/.codex/config.toml`
 notify = ["lifestream", "capture", "codex"]
 ```
 
+Strands has no transcript file, so its adapter is a Python hook provider
+that POSTs each message itself (`capture/strands`, package
+`lifestream-strands`). It sends on `MessageAddedEvent` and retries at the
+end of each invocation. Failed sends wait in memory. Each provider is one
+session with its own id and sequence. It runs the Python twin of the
+secret scanner, and `bytes` content (images) is sent as base64.
+
+```
+uv add /path/to/this/repo/capture/strands
+```
+```python
+from lifestream_strands import LifestreamCapture
+agent = Agent(hooks=[LifestreamCapture()])
+```
+
 Nothing is captured until `LIFESTREAM_CAPTURE=on`: set it in a project's
 `mise.toml` `[env]` for that project, or in your shell profile for all of
 them. `LIFESTREAM_DENY` wins even when capture is on.
@@ -266,18 +281,19 @@ internal/ingest/     /twilio/sms and /events
 internal/api/        the agent's internal API
 internal/dispatch/   delivers raw events to the agent
 internal/capture/    the transcript tailer behind `lifestream capture`, one parser per harness
-internal/scan/       the deterministic secret scanner (Go twin of agent/src/scanner.ts)
+internal/scan/       the deterministic secret scanner (twin of agent/src/scanner.ts and capture/strands' scan.py)
 internal/bus/        embedded NATS (in-process), backs the diagnostics samples
 internal/metrics/    process metrics, /metrics
 internal/web/        dashboard handlers, templates, assets/components.js (d3 + Rocket)
 agent/src/           the Pi Durable agent: main, agent (harness, per-owner conversations),
                      collections (extension: tools + sections), goapi, server
 agent/test/          faux-model tests, scanner tests, and the end-to-end test
-testdata/secrets.json  fake secrets shared by every scanner (agent/src/scanner.ts, internal/scan)
+testdata/secrets.json  fake secrets shared by every scanner (TypeScript, Go, Python)
 testdata/claude-code/  a synthetic Claude Code transcript and hook inputs
 testdata/pi/           a synthetic pi session file
 testdata/codex/        a synthetic Codex rollout and notify payload
 capture/claude-code/   the Claude Code plugin (Stop and SessionEnd hooks); .claude-plugin/ is its marketplace
 capture/pi/            the pi extension (turn_end, session_shutdown); tested from agent/test
+capture/strands/       the Strands hook provider (Python, uv; pytest, ruff)
 deploy/              deploy.sh and k8s/ (kustomize; Deployment, PVC, Service, Ingress, Litestream config)
 ```
