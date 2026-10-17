@@ -88,7 +88,7 @@ side of the contract):
 | `GET /api/collections/{id}/members` | Members, each with the definition version it was labeled under |
 | `GET /api/events?owner=&since=&after=&limit=&max_payload=` | Events in log order; payloads over `max_payload` bytes (default 4096) are elided, with `payload_size` |
 | `GET /api/events/{id}` | One event; `?offset=&limit=` returns a byte range of a large payload as `data` |
-| `POST /api/events` | Append a derived event `{owner, type, parent_id?, payload}`. `Idempotency-Key` header = the Pi Durable tool-call id. 201 new, 200 replay, 422 when it contradicts current state (unknown collection, closed collection, bad version). |
+| `POST /api/events` | Append a derived event `{owner, type, parent_id?, payload}`. `Idempotency-Key` header = the Pi Durable tool *task* id (`api.taskId`; provider tool-call ids aren't unique). 201 new, 200 replay, 422 when it contradicts current state (unknown collection, closed collection, bad version). |
 | `GET /healthz` | `ok` |
 
 The agent may append `collection.started|amended|stopped|resumed`,
@@ -114,6 +114,26 @@ Environment variables only (mise loads `.env` if present; never commit it).
 | `LOG_LEVEL` | all | `debug`, `info`, `warn`, `error` |
 | `LOG_FORMAT` | all | `json` for machine-readable logs |
 
+### Agent (`agent/`)
+
+Node ≥ 22.19 (mise pins 25), no build step: `node src/main.ts`. Pi Durable
+1.3.0, pinned exactly (it is experimental and has broken its API twice).
+
+| Variable | Meaning |
+| --- | --- |
+| `AGENT_ADDR` | Listen address for `POST /submit` and `GET /healthz` (default `127.0.0.1:8082`); point `LIFESTREAM_AGENT_URL` here |
+| `LIFESTREAM_API_URL` | Go's internal API (default `http://127.0.0.1:8081`) |
+| `DATA_DIR` | Where `agent.db` lives (default `~/.lifestream`) |
+| `AGENT_MODEL` | `provider/modelId` (default `anthropic/claude-haiku-4-5-20251001`); stored per conversation when it is created |
+| `ANTHROPIC_API_KEY` | Read by the Anthropic provider |
+
+One conversation per owner. Each event is submitted with its id as
+`requestId` (dedup survives restarts); SMS and dashboard events use
+`whenBusy: "steer"`. The `collections` extension's tools write derived
+events through Go's API; its `collections` section lists the open
+definitions before every model request. Tests use pi-ai's faux provider;
+`test/e2e.test.ts` drives the real Go binary.
+
 ## Layout
 
 ```
@@ -125,5 +145,7 @@ internal/dispatch/   delivers raw events to the agent
 internal/bus/        embedded NATS (in-process), backs the diagnostics samples
 internal/metrics/    process metrics, /metrics
 internal/web/        dashboard handlers, templates, assets/components.js (d3 + Rocket)
-agent/               the Pi Durable agent (TypeScript)
+agent/src/           the Pi Durable agent: main, agent (harness, per-owner conversations),
+                     collections (extension: tools + sections), goapi, server
+agent/test/          faux-model tests and the end-to-end test
 ```
