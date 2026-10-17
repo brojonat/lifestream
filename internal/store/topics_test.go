@@ -131,3 +131,10 @@ func TestTopicRebuildEqualsIncremental(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func TestTopicEventsSkipTheAgent(t *testing.T) {
+	f, _ := topicStory(t)
+	if got, _ := f.s.Undelivered(context.Background(), 100); len(got) != 0 {
+		t.Fatalf("%d topic events queued for the agent", len(got))
+	}
+}

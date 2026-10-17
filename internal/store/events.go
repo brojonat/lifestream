@@ -16,6 +16,13 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
+// notForAgent are owner and checkout events the agent has no part in:
+// dispatching them would only cost a model call each.
+var notForAgent = map[string]bool{
+	TypeTopicCreated: true, TypeTopicAmended: true, TypeTopicSubscribed: true,
+	TypeTopicUnsubscribed: true, TypeNotificationSent: true,
+}
+
 // SourceAgent marks events the agent wrote. They are never dispatched back
 // to it; everything else is.
 const SourceAgent = "agent"
@@ -130,7 +137,7 @@ func (s *Store) Append(ctx context.Context, e Event) (stored Event, created bool
 	e.Hash = chainHash(e.PrevHash, e)
 
 	// Raw events go to the agent; of a session, only the first few.
-	dispatch := e.Source != SourceAgent
+	dispatch := e.Source != SourceAgent && !notForAgent[e.Type]
 	if dispatch && session.SessionID != "" {
 		rank, err := sessionRank(ctx, tx, e.Owner, session.SessionID)
 		if err != nil {
