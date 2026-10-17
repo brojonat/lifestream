@@ -80,6 +80,9 @@ Public listener (`--addr`, what the ingress exposes):
 | `GET /log`, `POST /log/{id}/undo` | Rule log: every `collection.*` change, with one-click undo (appends the inverse: stop, resume, or `collection.amended {remove_rule}` / re-add) |
 | `POST /review/{id}/answer` | Answer a `review.flagged` question (queue at the top of the inbox); appends `review.answered`, which goes to the agent |
 | `GET /artifacts`, `POST /artifacts` | Saved Claude artifacts. Post a multipart upload (`title`, `html` file, up to 16 MB) or a claude.ai link (`title`, `url`; https on claude.ai only). Appends `artifact.saved`. The HTML is stored, never rendered on the dashboard's origin |
+| `GET /topics`, `POST /topics` | Paid-notification topics: name, one-time or monthly, price in dollars (blank is free). Lists each topic's current subscribers |
+| `POST /topics/{id}/history` | `from` (YYYY-MM-DD): how far back new subscribers can read; empty means from when they subscribe |
+| `POST /topics/{id}/send` | `text` (sent as JSON when it's a JSON object or array) and `confirm`, the subscriber count you were shown. 409 if the count changed since. Appends `notification.sent`. The agent can never send one |
 | `GET /rules`, `POST /rules`, `POST /rules/{id}/remove` | The rules doc: the owner's standing instructions (`rule.added` / `rule.removed`), which the agent reads before every event |
 | `GET /admin` | Process diagnostics |
 | `GET /healthz` | `ok` |

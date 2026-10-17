@@ -1,0 +1,26 @@
+{{define "region"}}<main id="topics">
+<div class="row"><h2>Topics</h2><span class="muted">people subscribe to a topic; you send each notification by hand</span></div>
+<form class="artifact" data-on:submit="@post('/topics', {payload: {name: el.elements.name.value, kind: el.elements.kind.value, price: el.elements.price.value}}); el.reset()">
+  <input type="text" name="name" required aria-label="topic name" placeholder="e.g. my new stock" data-ignore-morph>
+  <select name="kind" aria-label="price kind" data-ignore-morph><option value="monthly">monthly</option><option value="one_time">one-time</option></select>
+  <input type="text" name="price" inputmode="decimal" aria-label="price in dollars" placeholder="$ price (blank: free)" data-ignore-morph>
+  <button class="quiet" type="submit">Create</button>
+</form>
+{{if not .Topics}}<p class="empty">No topics yet.</p>{{end}}
+{{range .Topics}}<section class="topic" id="topic-{{.ID}}">
+  <div class="row"><h3>{{.Name}}</h3>
+    <span class="muted">{{if eq .Price.AmountCents 0}}free{{else}}{{cents .Price.AmountCents}}{{end}} {{if eq .Price.Kind "monthly"}}a month{{else}}once{{end}}{{with .Cap}} · first {{.}} only{{end}} · <strong>{{.Subscribers}}</strong> subscriber{{if ne .Subscribers 1}}s{{end}}</span></div>
+  <form class="artifact" data-on:submit="@post('/topics/{{.ID}}/history', {payload: {from: el.elements.from.value}})">
+    <label class="muted">New subscribers can read back to
+      <input type="date" name="from" value="{{with .HistoryStart}}{{.Format "2006-01-02"}}{{end}}" data-ignore-morph></label>
+    <button class="quiet" type="submit">Save</button>
+    <span class="muted">{{if .HistoryStart}}set{{else}}blank: from when they subscribe{{end}}</span>
+  </form>
+  <form class="artifact" data-on:submit="confirm('Send this to {{.Subscribers}} subscriber{{if ne .Subscribers 1}}s{{end}} of {{.Name}}?') && @post('/topics/{{.ID}}/send', {payload: {text: el.elements.text.value, confirm: '{{.Subscribers}}'}}) && el.reset()">
+    <textarea name="text" required aria-label="notification" placeholder="text, a link, or JSON" data-ignore-morph></textarea>
+    <button type="submit">Send to {{.Subscribers}}</button>
+  </form>
+</section>
+{{end}}
+</main>
+{{end}}

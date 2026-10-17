@@ -89,7 +89,7 @@ type Server struct {
 // NewHandler wires the routes.
 func NewHandler(d Deps) http.Handler {
 	s := &Server{Deps: d, pages: map[string]*template.Template{}}
-	for _, name := range []string{"metrics", "inbox", "collections", "collection", "rules", "log", "artifacts", "admin"} {
+	for _, name := range []string{"metrics", "inbox", "collections", "collection", "rules", "log", "artifacts", "topics", "admin"} {
 		s.pages[name] = template.Must(template.New("").Funcs(funcs).ParseFS(files,
 			"templates/layout.html", "templates/"+name+".html"))
 	}
@@ -120,6 +120,11 @@ func NewHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /artifacts", s.page("artifacts", s.artifactsView))
 	mux.HandleFunc("GET /artifacts/stream", s.stream("artifacts", s.artifactsView, s.storeWatch))
 	mux.HandleFunc("POST /artifacts", s.saveArtifact)
+	mux.HandleFunc("GET /topics", s.page("topics", s.topicsView))
+	mux.HandleFunc("GET /topics/stream", s.stream("topics", s.topicsView, s.storeWatch))
+	mux.HandleFunc("POST /topics", s.createTopic)
+	mux.HandleFunc("POST /topics/{id}/history", s.setHistory)
+	mux.HandleFunc("POST /topics/{id}/send", s.sendNotification)
 	if s.Collector != nil {
 		mux.HandleFunc("GET /admin", s.page("admin", s.adminView))
 		mux.HandleFunc("GET /admin/stream", s.stream("admin", s.adminView, s.metricsWatch))
@@ -133,6 +138,7 @@ var funcs = template.FuncMap{
 	"num":    num,
 	"signed": signed,
 	"deref":  func(p *float64) float64 { return *p },
+	"cents":  func(c int64) string { return fmt.Sprintf("$%d.%02d", c/100, c%100) },
 	"kb": func(n int) string {
 		if n < 1<<20 {
 			return fmt.Sprintf("%.1f KB", float64(n)/1024)

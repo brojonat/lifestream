@@ -519,3 +519,77 @@ func TestArtifactsPage(t *testing.T) {
 		t.Fatalf("artifacts: %+v", list)
 	}
 }
+
+func TestTopicsPage(t *testing.T) {
+	ctx := context.Background()
+	h, st, _ := newServer(t)
+	u, _, _ := st.AddUser(ctx, "me", "+1")
+	post := func(path, payload string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", path, strings.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := post("/topics", `{"name":"my <b>new</b> stock","kind":"monthly","price":"5"}`); rec.Code != 204 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := post("/topics", `{"name":"x","kind":"monthly","price":"five"}`); rec.Code != 400 {
+		t.Fatalf("bad price: %d", rec.Code)
+	}
+	ts, _ := st.Topics(ctx, u.ID)
+	if len(ts) != 1 || ts[0].Price.AmountCents != 500 {
+		t.Fatalf("topics: %+v", ts)
+	}
+	id := ts[0].ID
+	w := world{t, st, u.ID}
+	w.add("stripe", store.TypeTopicSubscribed, "", time.Now(), store.TopicSubscribed{TopicID: id, Subscriber: "ann@example.com"})
+
+	if rec := post("/topics/"+id+"/history", `{"from":"2026-10-01"}`); rec.Code != 204 {
+		t.Fatalf("history: %d %s", rec.Code, rec.Body.String())
+	}
+	if tp, _ := st.Topic(ctx, id); tp.HistoryStart == nil || tp.HistoryStart.Format("2006-01-02") != "2026-10-01" {
+		t.Fatalf("history start: %+v", tp)
+	}
+	if rec := post("/topics/"+id+"/history", `{"from":""}`); rec.Code != 204 {
+		t.Fatalf("clear history: %d", rec.Code)
+	}
+
+	if rec := post("/topics/"+id+"/send", `{"text":"buy","confirm":"0"}`); rec.Code != 409 {
+		t.Fatalf("a stale count must be refused: %d", rec.Code)
+	}
+	if rec := post("/topics/"+id+"/send", `{"text":"{\"ticker\":\"LIFE\"}","confirm":"1"}`); rec.Code != 204 {
+		t.Fatalf("send: %d %s", rec.Code, rec.Body.String())
+	}
+	inbox, _ := st.SubscriberInbox(ctx, "ann@example.com", 10)
+	if len(inbox) != 1 || string(inbox[0].Payload) != `{"ticker":"LIFE"}` {
+		t.Fatalf("inbox: %+v", inbox)
+	}
+
+	page := do(t, h, "GET", "/topics", "").Body.String()
+	for _, want := range []string{"my &lt;b&gt;new&lt;/b&gt; stock", "$5.00", "a month", "<strong>1</strong> subscriber", "Send to 1"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("topics page missing %q", want)
+		}
+	}
+	if strings.Contains(page, "<b>new</b>") {
+		t.Fatal("topic name rendered as HTML")
+	}
+}
+
+func TestTopicNameIsEscapedInsideTheConfirm(t *testing.T) {
+	ctx := context.Background()
+	h, st, _ := newServer(t)
+	u, _, _ := st.AddUser(ctx, "me", "+1")
+	w := world{t, st, u.ID}
+	w.add(SourceDashboard, store.TypeTopicCreated, "", time.Now(), store.TopicCreated{Name: `x'); alert('owned`, Price: store.Price{Kind: store.PriceOneTime}})
+	page := do(t, h, "GET", "/topics", "").Body.String()
+	i := strings.Index(page, "confirm(")
+	if i < 0 {
+		t.Fatal("no confirm")
+	}
+	attr := page[i : i+120]
+	if strings.Contains(attr, `x'); alert('owned`) || strings.Contains(attr, "x&#39;); alert(") {
+		t.Fatalf("topic name breaks out of the JS string: %s", attr)
+	}
+}
