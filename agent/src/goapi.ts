@@ -69,6 +69,12 @@ export class GoApi {
 		return body.events;
 	}
 
+	/** Events derived from this one (payloads over 4 KB come back null). */
+	async children(id: string): Promise<StoredEvent[]> {
+		const body = (await this.#request("GET", `/api/events/${encodeURIComponent(id)}/children`)) as { events: StoredEvent[] };
+		return body.events;
+	}
+
 	async members(collectionId: string): Promise<{ event_id: string; definition_version: number }[]> {
 		const body = (await this.#request("GET", `/api/collections/${encodeURIComponent(collectionId)}/members`)) as {
 			members: { event_id: string; definition_version: number }[];

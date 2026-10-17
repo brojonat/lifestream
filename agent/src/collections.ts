@@ -8,6 +8,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { type ConversationId, defineDoc, defineExtension, defineTool, section, type ToolExecutionApi } from "@earendil-works/pi-durable";
 import { ApiError, type Collection, type GoApi } from "./goapi.ts";
 import { DEFAULT_LOOKBACK_DAYS, type LookBackOptions, lookBackTask } from "./lookback.ts";
+import type { redactionTask } from "./redaction.ts";
 
 /** Which owner a conversation belongs to. Written when the conversation is created. */
 export const OwnerDoc = defineDoc<{ owner: string }>({
@@ -60,9 +61,13 @@ export function collectionsSection(c: Collection): string {
 export const text = (s: string) => ({ output: [{ type: "text" as const, text: s }] });
 export const fail = (s: string) => ({ ...text(s), isError: true });
 
-/** Builds the extension. `api` is the Go client; `lookBack` tunes the look-back task (tests). */
-export function collectionsExtension(api: GoApi, opts: { lookBack?: LookBackOptions } = {}) {
-	const LookBack = lookBackTask(api, opts.lookBack);
+/**
+ * Builds the extension. `api` is the Go client; `redact` is the redaction
+ * task (from the redaction extension), started for every label;
+ * `lookBack` tunes the look-back task (tests).
+ */
+export function collectionsExtension(api: GoApi, redact: ReturnType<typeof redactionTask>, opts: { lookBack?: LookBackOptions } = {}) {
+	const LookBack = lookBackTask(api, redact, opts.lookBack);
 	// Every write: owner from the conversation, idempotency key from the tool
 	// task (stable when a replay-safe tool reruns after a crash).
 	// Starts the look-back over the last N days (or a re-check of members).
@@ -145,7 +150,7 @@ export function collectionsExtension(api: GoApi, opts: { lookBack?: LookBackOpti
 		execute: (a, tapi, ctx) =>
 			write(tapi, ctx, "label.applied", {
 				event_id: a.event_id, collection_id: a.collection_id, definition_version: a.definition_version, reason: a.reason,
-			}, a.event_id),
+			}, a.event_id, (owner) => tapi.createTask(redact, { owner, eventId: a.event_id }, { ownership: { kind: "conversation" }, background: true }, ctx)),
 	});
 
 	const logValue = defineTool({

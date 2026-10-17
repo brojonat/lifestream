@@ -4,11 +4,12 @@
 
 import type { Context } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai/models";
-import { type Conversation, type ConversationId, configure, createRegistry, defineDoc, Harness } from "@earendil-works/pi-durable";
+import { type Conversation, type ConversationId, configure, createRegistry, defineDoc, defineExtension, Harness } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { collectionsExtension, OwnerDoc } from "./collections.ts";
 import type { GoApi, StoredEvent } from "./goapi.ts";
 import type { LookBackOptions } from "./lookback.ts";
+import { type RedactionOptions, redactionTask } from "./redaction.ts";
 import { rulesExtension } from "./rules.ts";
 
 /** owner -> conversation id; conversations have no keys of their own. */
@@ -33,6 +34,8 @@ export type AgentOptions = {
 	onReport?: (err: unknown) => void;
 	/** Look-back knobs (a stub judge, a short retry delay); for tests. */
 	lookBack?: LookBackOptions;
+	/** Redaction knobs (a stub reviewer, a short retry delay); for tests. */
+	redaction?: RedactionOptions;
 };
 
 export class Agent {
@@ -46,7 +49,9 @@ export class Agent {
 
 	static async open(opts: AgentOptions, ctx: Context): Promise<Agent> {
 		const registry = createRegistry();
-		registry.install(collectionsExtension(opts.api, { lookBack: opts.lookBack }));
+		const redact = redactionTask(opts.api, opts.redaction);
+		registry.install(defineExtension({ name: "redaction", tasks: [redact] }));
+		registry.install(collectionsExtension(opts.api, redact, { lookBack: opts.lookBack }));
 		registry.install(rulesExtension(opts.api));
 		const harness = await Harness.open(
 			await openNodeSqliteStorage(opts.storagePath),

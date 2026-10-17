@@ -43,6 +43,7 @@ func NewHandler(st *store.Store, log *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /api/rules", h.rules)
 	mux.HandleFunc("GET /api/events", h.listEvents)
 	mux.HandleFunc("GET /api/events/{id}", h.event)
+	mux.HandleFunc("GET /api/events/{id}/children", h.children)
 	mux.HandleFunc("POST /api/events", h.appendEvent)
 	return mux
 }
@@ -181,6 +182,21 @@ func (h *handler) event(w http.ResponseWriter, r *http.Request) {
 	data := string(e.Payload[start:end])
 	e.Payload = json.RawMessage("null")
 	writeJSON(w, http.StatusOK, Slice{Event: e, PayloadSize: size, Offset: start, Data: data})
+}
+
+// GET /api/events/{id}/children: derived events, payloads elided past
+// DefaultMaxPayload as in lists.
+func (h *handler) children(w http.ResponseWriter, r *http.Request) {
+	evs, err := h.st.Children(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	out := make([]Summary, 0, len(evs))
+	for _, e := range evs {
+		out = append(out, summarize(e, DefaultMaxPayload))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": out})
 }
 
 // AppendRequest is a derived event from the agent. The Idempotency-Key

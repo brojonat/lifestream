@@ -15,6 +15,7 @@ import { Agent, describe, POINTER_BYTES } from "../src/agent.ts";
 import { type Collection, GoApi, type StoredEvent } from "../src/goapi.ts";
 import { newLogger } from "../src/log.ts";
 import { type Judge, judgePrompt, parseVerdicts } from "../src/lookback.ts";
+import { parseSpans, type Reviewer, reviewPrompt } from "../src/redaction.ts";
 import { handler } from "../src/server.ts";
 
 const ctx = BACKGROUND_CONTEXT;
@@ -27,6 +28,7 @@ class FakeGo {
 	rules: { id: string; text: string; source: string }[] = [];
 	events: (StoredEvent & { seq: number })[] = []; // raw events the look-back can find
 	members = new Map<string, Set<string>>();
+	submitted = new Map<string, StoredEvent & { seq: number }>();
 	server!: Server;
 	url = "";
 
@@ -50,10 +52,14 @@ class FakeGo {
 			if (req.method === "GET" && m) {
 				return json(200, { members: [...(this.members.get(m[1]) ?? [])].map((event_id) => ({ event_id, definition_version: 1 })) });
 			}
+			const kids = /^\/api\/events\/(\w+)\/children$/.exec(url.pathname);
+			if (req.method === "GET" && kids) {
+				return json(200, { events: this.appends.filter((a) => a.body.parent_id === kids[1]).map((a) => ({ type: a.body.type })) });
+			}
 			const one = /^\/api\/events\/(\w+)$/.exec(url.pathname);
 			if (req.method === "GET" && one) {
-				const e = this.events.find((x) => x.id === one[1]);
-				if (!e) return json(404, { error: "not found" });
+				// Events a test submitted straight to the agent aren't in the list; serve what it sent.
+				const e = this.events.find((x) => x.id === one[1]) ?? this.submitted.get(one[1]) ?? { ...sms(one[1], ""), seq: 0 };
 				return json(200, url.searchParams.has("offset") ? { ...e, payload: null, data: JSON.stringify(e.payload) } : e);
 			}
 			if (req.method === "GET" && url.pathname === "/api/rules") {
@@ -109,13 +115,15 @@ after(async () => {
 });
 
 let dbs = 0;
-function open(responses: Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0], opts: { judge?: Judge; db?: string } = {}) {
+function open(responses: Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0], opts: { judge?: Judge; db?: string; reviewer?: Reviewer } = {}) {
 	const faux = fauxProvider();
 	faux.setResponses(responses);
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const storagePath = join(dir, opts.db ?? `agent-${++dbs}.db`); // each test its own harness state
-	return Agent.open({ storagePath, models, model: { provider: "faux", modelId: "faux-1" }, api: new GoApi(go.url), lookBack: { judge: opts.judge, retryBaseMs: 20 } }, ctx);
+	return Agent.open({ storagePath, models, model: { provider: "faux", modelId: "faux-1" }, api: new GoApi(go.url), lookBack: { judge: opts.judge, retryBaseMs: 20 },
+		// Redaction runs after every label; tests not about it get a reviewer that finds nothing.
+		redaction: { reviewer: opts.reviewer ?? (async () => []), retryBaseMs: 20 } }, ctx);
 }
 
 test("steering, labeling, values, dedup and restart", async () => {
@@ -141,12 +149,14 @@ test("steering, labeling, values, dedup and restart", async () => {
 	const second = await agent.submit(OWNER, sms("E2", "weight 175"), ctx);
 	assert.equal((await second.wait(ctx)).status, "done");
 
-	assert.deepEqual(go.appends.map((a) => a.body.type), ["collection.started", "label.applied", "metric.observed"]);
-	for (const a of go.appends) {
+	// Redactions land asynchronously (their own test covers them).
+	const writes = () => go.appends.filter((a) => a.body.type !== "redaction.created");
+	assert.deepEqual(writes().map((a) => a.body.type), ["collection.started", "label.applied", "metric.observed"]);
+	for (const a of writes()) {
 		assert.equal(a.body.owner, OWNER);
 		assert.match(a.key ?? "", /^tool:/, "every write carries the tool task id as its idempotency key");
 	}
-	assert.equal(new Set(go.appends.map((a) => a.key)).size, 3, "keys differ per tool call");
+	assert.equal(new Set(writes().map((a) => a.key)).size, 3, "keys differ per tool call");
 	assert.equal(go.appends[0].body.parent_id, "E1");
 	assert.deepEqual(go.appends[2].body.payload, { collection_id: "01DERIVED1", value: 175 });
 	assert.match(seenPrompts[0], /No open collections/);
@@ -164,7 +174,7 @@ test("steering, labeling, values, dedup and restart", async () => {
 	assert.equal((await agent.conversationFor(OWNER, ctx)).id, conv.id, "same conversation after restart");
 	const afterRestart = await agent.submit(OWNER, sms("E2", "weight 175"), ctx);
 	assert.equal(String(afterRestart.id), String(second.id));
-	assert.equal(go.appends.length, 3);
+	assert.equal(writes().length, 3);
 	await agent.close(ctx);
 });
 
@@ -269,6 +279,49 @@ test("judge prompt and verdict parsing", () => {
 	assert.match(p, /id=A type=message.received/);
 	assert.deepEqual(parseVerdicts('Sure!\n[{"event_id":"A","member":true,"value":175},{"bogus":1}]\nDone.'), [{ event_id: "A", member: true, value: 175 }]);
 	assert.throws(() => parseVerdicts("no idea"), /no JSON array/);
+});
+
+test("every labeled event gets one redacted copy: scanner, then model review", async () => {
+	go.appends = [];
+	const msg = sms("R1", "deploy key AKIAIOSFODNN7EXAMPLE for Acme Corp, ask bob@acme.example");
+	go.submitted.set("R1", { ...msg, seq: 0 });
+	const reviewed: string[] = [];
+	const reviewer: Reviewer = async (chunk, rules) => {
+		reviewed.push(chunk);
+		assert.deepEqual(rules, go.rules.map((r) => r.text));
+		return [{ text: "Acme Corp", kind: "client" }];
+	};
+	const agent = await open([
+		fauxAssistantMessage([
+			fauxToolCall("label_event", { event_id: "R1", collection_id: "01DERIVED1", definition_version: 1, reason: "deploy" }),
+		], { stopReason: "toolUse" }),
+		fauxAssistantMessage([fauxText("filed")]),
+		// The same event labeled into a second collection: no second copy.
+		fauxAssistantMessage([
+			fauxToolCall("label_event", { event_id: "R1", collection_id: "01DERIVED2", definition_version: 1, reason: "also" }),
+		], { stopReason: "toolUse" }),
+		fauxAssistantMessage([fauxText("filed again")]),
+	], { reviewer });
+	await (await agent.submit(OWNER, msg, ctx)).wait(ctx);
+	for (let i = 0; i < 200 && !go.appends.some((a) => a.body.type === "redaction.created"); i++) await new Promise((r) => setTimeout(r, 10));
+	await (await agent.submit(OWNER, { ...msg, id: "R1-again" }, ctx)).wait(ctx);
+	await new Promise((r) => setTimeout(r, 200)); // give a duplicate redaction time to (not) appear
+	await agent.close(ctx);
+
+	const copies = go.appends.filter((a) => a.body.type === "redaction.created");
+	assert.equal(copies.length, 1, "one redacted copy per event");
+	const red = copies[0].body;
+	assert.equal(red.parent_id, "R1");
+	assert.equal(copies[0].key, "redact:R1");
+	assert.equal(red.payload.payload.Body, "deploy key [REDACTED:aws_access_key] for [REDACTED:client], ask [REDACTED:email]");
+	assert.deepEqual(red.payload.findings.map((f: { kind: string }) => f.kind).sort(), ["aws_access_key", "email", "model:client"]);
+	assert.equal(reviewed.length, 1);
+	assert.ok(!reviewed[0].includes("AKIA"), "the model never sees what the scanner caught");
+});
+
+test("review prompt and span parsing", () => {
+	assert.match(reviewPrompt("some text", ["never name my employer"]), /- never name my employer/);
+	assert.deepEqual(parseSpans('[{"text":"Acme","kind":"client"},{"text":"  ","kind":"x"},{"kind":"y"}]'), [{ text: "Acme", kind: "client" }]);
 });
 
 test("large payloads become pointers", () => {

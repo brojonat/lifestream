@@ -10,6 +10,10 @@ import type { Context } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai/models";
 import { defineTask, type TaskRuntime } from "@earendil-works/pi-durable";
 import { ApiError, type Collection, type GoApi, type StoredEvent } from "./goapi.ts";
+import type { redactionTask } from "./redaction.ts";
+import { type Retry, retrying, retryPhase } from "./retry.ts";
+
+type RedactTask = ReturnType<typeof redactionTask>;
 
 export const DEFAULT_LOOKBACK_DAYS = 7;
 const BATCH = 20;
@@ -26,14 +30,8 @@ export type LookBackInput = {
 };
 
 type Scan = { phase: "scan"; after: number; checked: number; changed: number; attempt?: number };
-type State =
-	| Scan
-	| { phase: "retry"; until: number; scan: Scan }
-	| { phase: "report"; checked: number; changed: number; name: string };
-
-/** A phase that throws faults its task for good, so failures retry here first. */
-const MAX_ATTEMPTS = 6;
-export const backoffMs = (attempt: number, baseMs = 5000) => Math.min(baseMs * 2 ** attempt, 5 * 60_000);
+type Report = { phase: "report"; checked: number; changed: number; name: string };
+type State = Scan | Retry<Scan> | Report;
 
 export type Verdict = { event_id: string; member: boolean; value?: number; reason?: string };
 
@@ -79,7 +77,8 @@ export function parseVerdicts(text: string): Verdict[] {
 
 export type LookBackOptions = { judge?: Judge; retryBaseMs?: number };
 
-export function lookBackTask(api: GoApi, { judge, retryBaseMs }: LookBackOptions = {}) {
+/** `redact` is the redaction task, started for every event the look-back labels. */
+export function lookBackTask(api: GoApi, redact: RedactTask, { judge, retryBaseMs }: LookBackOptions = {}) {
 	// One batch: judge it, write the results, checkpoint the cursor. Writes
 	// use deterministic keys, so rerunning a batch after a crash or a retry
 	// changes nothing twice.
@@ -116,6 +115,7 @@ export function lookBackTask(api: GoApi, { judge, retryBaseMs }: LookBackOptions
 		}
 
 		let changed = 0;
+		const labeled: string[] = [];
 		if (batch.length > 0) {
 			let ask = judge;
 			if (!ask) {
@@ -130,6 +130,7 @@ export function lookBackTask(api: GoApi, { judge, retryBaseMs }: LookBackOptions
 				const key = `lookback:${collectionId}:v${c.version}:${v.event_id}`;
 				if (mode === "include" && v.member) {
 					await api.append(owner, "label.applied", { event_id: v.event_id, collection_id: c.id, definition_version: c.version, reason: `look-back: ${v.reason ?? "matches"}` }, { parentId: v.event_id, idempotencyKey: `${key}:label` });
+					labeled.push(v.event_id);
 					if (c.kind === "metric" && typeof v.value === "number") {
 						await api.append(owner, "metric.observed", { collection_id: c.id, value: v.value }, { parentId: v.event_id, idempotencyKey: `${key}:value` });
 					}
@@ -143,10 +144,13 @@ export function lookBackTask(api: GoApi, { judge, retryBaseMs }: LookBackOptions
 		// Removed members drop out of the list, so the exclude cursor only moves
 		// past the ones that stayed.
 		if (mode === "exclude") next -= changed;
-		await runtime.commit(
-			() => ({ status: "running", checkpoint: { phase: "scan", after: next, checked: st.checked + batch.length, changed: st.changed + changed } }),
-			ctx,
-		);
+		// The checkpoint and the redaction tasks for this batch commit together.
+		await runtime.commit(async (tx) => {
+			for (const eventId of labeled) {
+				await tx.createTask(redact, { owner, eventId }, { ownership: { kind: "conversation" }, background: true });
+			}
+			return { status: "running", checkpoint: { phase: "scan", after: next, checked: st.checked + batch.length, changed: st.changed + changed } };
+		}, ctx);
 	}
 
 	return defineTask<LookBackInput, State, null>({
@@ -154,26 +158,10 @@ export function lookBackTask(api: GoApi, { judge, retryBaseMs }: LookBackOptions
 		version: 1,
 		initial: () => ({ phase: "scan", after: 0, checked: 0, changed: 0 }),
 		phases: {
-			scan: async (task, runtime, ctx) => {
-				const st = task.state.checkpoint as Scan;
-				try {
-					await scanBatch(task.input, st, runtime, ctx);
-				} catch (err) {
-					const attempt = (st.attempt ?? 0) + 1;
-					if (attempt >= MAX_ATTEMPTS) throw err; // give up: the task ends faulted and onReport logs it
-					runtime.report(err);
-					const until = runtime.now() + backoffMs(attempt - 1, retryBaseMs);
-					await runtime.commit(() => ({ status: "running", checkpoint: { phase: "retry", until, scan: { ...st, attempt } } }), ctx);
-				}
-			},
-			// The deadline is in the checkpoint, so a restart keeps waiting for the same moment.
-			retry: async (task, runtime, ctx) => {
-				const st = task.state.checkpoint as Extract<State, { phase: "retry" }>;
-				await runtime.sleep(st.until, ctx);
-				await runtime.commit(() => ({ status: "running", checkpoint: st.scan }), ctx);
-			},
+			scan: retrying<LookBackInput, Scan, State, null>(retryBaseMs, (task, runtime, ctx) => scanBatch(task.input, task.state.checkpoint, runtime, ctx)),
+			retry: retryPhase<LookBackInput, Scan, State, null>(),
 			report: async (task, runtime, ctx) => {
-				const st = task.state.checkpoint as Extract<State, { phase: "report" }>;
+				const st = task.state.checkpoint as Report;
 				const what = task.input.mode === "include" ? `labeled ${st.changed}` : `removed ${st.changed}`;
 				const conv = await runtime.conversation(runtime.conversationId, ctx);
 				await conv?.submit(

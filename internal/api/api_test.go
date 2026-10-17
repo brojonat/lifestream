@@ -94,7 +94,11 @@ func TestAgentFlow(t *testing.T) {
 		}
 	}
 
-	code, out := e.do("GET", "/api/collections?owner="+e.owner+"&status=open", "")
+	code, out := e.do("GET", "/api/events/"+msg.ID+"/children", "")
+	if kids := out["events"].([]any); code != 200 || len(kids) != 3 || kids[1].(map[string]any)["type"] != "label.applied" {
+		t.Fatalf("children: %d %v", code, out)
+	}
+	code, out = e.do("GET", "/api/collections?owner="+e.owner+"&status=open", "")
 	cs := out["collections"].([]any)
 	if code != 200 || len(cs) != 1 || cs[0].(map[string]any)["name"] != "weight" {
 		t.Fatalf("collections: %d %v", code, out)

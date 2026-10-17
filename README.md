@@ -91,6 +91,7 @@ side of the contract):
 | `GET /api/collections/{id}/members` | Members, each with the definition version it was labeled under |
 | `GET /api/rules?owner=` | The rules doc |
 | `GET /api/events?owner=&since=&after=&limit=&max_payload=` | Events in log order; payloads over `max_payload` bytes (default 4096) are elided, with `payload_size` |
+| `GET /api/events/{id}/children` | Events derived from it |
 | `GET /api/events/{id}` | One event; `?offset=&limit=` returns a byte range of a large payload as `data` |
 | `POST /api/events` | Append a derived event `{owner, type, parent_id?, payload}`. `Idempotency-Key` header = the Pi Durable tool *task* id (`api.taskId`; provider tool-call ids aren't unique). 201 new, 200 replay, 422 when it contradicts current state (unknown collection, closed collection, bad version). |
 | `GET /healthz` | `ok` |
@@ -142,7 +143,14 @@ Starting a collection or adding an include runs a look-back: a background
 task (`lifestream.lookback`) that labels the last 7 days (`lookback_days`
 overrides; 0 skips) in batches of 20, one model call per batch,
 checkpointing as it goes and retrying with backoff before giving up. An
-exclude re-checks current members and emits `label.removed`. Tests use pi-ai's faux provider;
+exclude re-checks current members and emits `label.removed`.
+Every labeled event also gets one redacted copy (`redaction.created`,
+parent = the event) from a background task (`lifestream.redact`): the
+deterministic scanner (`agent/src/scanner.ts`; corpus in
+`testdata/secrets.json`) masks keys, tokens, private keys, connection
+passwords, emails and phone numbers, then the model reviews what's left in
+12 KB chunks (up to 10) against the rules doc. The model never sees what
+the scanner caught. Payloads over 4 KB reach the conversation as pointers. Tests use pi-ai's faux provider;
 `test/e2e.test.ts` drives the real Go binary.
 
 ## Deploy
@@ -180,6 +188,7 @@ internal/metrics/    process metrics, /metrics
 internal/web/        dashboard handlers, templates, assets/components.js (d3 + Rocket)
 agent/src/           the Pi Durable agent: main, agent (harness, per-owner conversations),
                      collections (extension: tools + sections), goapi, server
-agent/test/          faux-model tests and the end-to-end test
+agent/test/          faux-model tests, scanner tests, and the end-to-end test
+testdata/secrets.json  fake secrets shared by every scanner (agent now, capture adapters later)
 deploy/              deploy.sh and k8s/ (kustomize; Deployment, PVC, Service, Ingress, Litestream config)
 ```

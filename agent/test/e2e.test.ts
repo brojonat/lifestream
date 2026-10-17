@@ -70,7 +70,8 @@ test("text 'weight 175' end to end", { skip: !existsSync(BIN) && "build ../bin/l
 	]);
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const agent = await Agent.open({ storagePath: join(dir, "agent.db"), models, model: { provider: "faux", modelId: "faux-1" }, api: new GoApi(goApi) }, ctx);
+	const agent = await Agent.open({ storagePath: join(dir, "agent.db"), models, model: { provider: "faux", modelId: "faux-1" }, api: new GoApi(goApi),
+		redaction: { reviewer: async () => [{ text: "+15555550100", kind: "phone-again" }] } }, ctx);
 	const quiet = newLogger({ LOG_LEVEL: "error" });
 	const agentServer = createServer(handler(agent, quiet, ctx));
 	await new Promise<void>((r) => agentServer.listen(agentPort, "127.0.0.1", r));
@@ -102,7 +103,16 @@ test("text 'weight 175' end to end", { skip: !existsSync(BIN) && "build ../bin/l
 		});
 		assert.equal(members.length, 1);
 
-		// The dashboard shows the reading.
+		// The labeled SMS got a redacted copy in Go: the sender's number masked.
+		const msgId = ((await api.events(user.id, {})).find((e) => (e.payload as { Body?: string })?.Body === "weight 175"))!.id;
+		const copy = await until("redaction", async () => {
+			const kids = (await (await fetch(`${goApi}/api/events/${msgId}/children`)).json()) as { events: { type: string; payload: any }[] };
+			return kids.events.find((k) => k.type === "redaction.created");
+		});
+		assert.equal(copy.payload.payload.From, "[REDACTED:phone]");
+		assert.equal(copy.payload.payload.Body, "weight 175");
+
+				// The dashboard shows the reading.
 		await until("dashboard", async () => {
 			const html = await (await fetch(`http://127.0.0.1:${webPort}/`)).text();
 			return html.includes('<div class="value">175<span class="unit">lb</span>') ? true : undefined;

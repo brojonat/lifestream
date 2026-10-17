@@ -150,6 +150,11 @@ func (s *Store) EventsSince(ctx context.Context, owner string, since time.Time, 
 		owner, fmtTime(since), afterSeq, limit)
 }
 
+// Children returns the events derived from id, oldest first.
+func (s *Store) Children(ctx context.Context, id string) ([]Event, error) {
+	return s.queryEvents(ctx, selectEvent+` WHERE parent_id = ? ORDER BY seq`, id)
+}
+
 // AllEvents returns every owner's events after seq, oldest first. It is
 // the feed projections are built from.
 func (s *Store) AllEvents(ctx context.Context, afterSeq int64, limit int) ([]Event, error) {
