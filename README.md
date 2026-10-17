@@ -76,9 +76,18 @@ side of the contract):
 
 | Route | What |
 | --- | --- |
-| `GET /api/collections?owner=` | Current collection definitions |
-| `GET /api/events/{id}` | One event; `?offset=&limit=` for a byte range of a large payload |
-| `POST /api/events` | Append a derived event. `Idempotency-Key` header = the Pi Durable tool-call id. |
+| `GET /api/collections?owner=&status=` | Current collection definitions with their rules |
+| `GET /api/collections/{id}/members` | Members, each with the definition version it was labeled under |
+| `GET /api/events?owner=&since=&after=&limit=&max_payload=` | Events in log order; payloads over `max_payload` bytes (default 4096) are elided, with `payload_size` |
+| `GET /api/events/{id}` | One event; `?offset=&limit=` returns a byte range of a large payload as `data` |
+| `POST /api/events` | Append a derived event `{owner, type, parent_id?, payload}`. `Idempotency-Key` header = the Pi Durable tool-call id. 201 new, 200 replay, 422 when it contradicts current state (unknown collection, closed collection, bad version). |
+| `GET /healthz` | `ok` |
+
+The agent may append `collection.started|amended|stopped|resumed`,
+`label.applied`, `metric.observed`, `review.flagged` and
+`redaction.created`. Payload shapes are the structs in
+`internal/store/projections.go`; a collection's id is the id of its
+`collection.started` event.
 
 ## Configuration
 

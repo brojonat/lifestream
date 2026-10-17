@@ -51,14 +51,14 @@ func NewID(t time.Time) string {
 // written.
 func (s *Store) Append(ctx context.Context, e Event) (stored Event, created bool, err error) {
 	if e.Owner == "" || e.Source == "" || e.Type == "" {
-		return Event{}, false, fmt.Errorf("appending event: owner, source and type are required")
+		return Event{}, false, invalid("owner, source and type are required")
 	}
 	if len(e.Payload) == 0 {
 		e.Payload = json.RawMessage("{}")
 	}
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, e.Payload); err != nil {
-		return Event{}, false, fmt.Errorf("appending event: payload is not JSON: %w", err)
+		return Event{}, false, invalid("payload is not JSON: %v", err)
 	}
 	e.Payload = compact.Bytes()
 	now := time.Now().UTC()
@@ -88,6 +88,19 @@ func (s *Store) Append(ctx context.Context, e Event) (stored Event, created bool
 		}
 		if !errors.Is(err, ErrNotFound) {
 			return Event{}, false, fmt.Errorf("checking idempotency key: %w", err)
+		}
+	}
+
+	var known int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE id = ?`, e.Owner).Scan(&known); err != nil {
+		return Event{}, false, fmt.Errorf("checking owner: %w", err)
+	}
+	if known == 0 {
+		return Event{}, false, invalid("unknown owner %q", e.Owner)
+	}
+	if e.ParentID != "" {
+		if err := ownedEvent(ctx, tx, e.Owner, e.ParentID); err != nil {
+			return Event{}, false, err
 		}
 	}
 
@@ -128,6 +141,13 @@ func (s *Store) Event(ctx context.Context, id string) (Event, error) {
 // most limit of them.
 func (s *Store) Events(ctx context.Context, owner string, afterSeq int64, limit int) ([]Event, error) {
 	return s.queryEvents(ctx, selectEvent+` WHERE owner = ? AND seq > ? ORDER BY seq LIMIT ?`, owner, afterSeq, limit)
+}
+
+// EventsSince returns an owner's events that occurred at or after since,
+// in log order after seq, at most limit. Look-back scans page through it.
+func (s *Store) EventsSince(ctx context.Context, owner string, since time.Time, afterSeq int64, limit int) ([]Event, error) {
+	return s.queryEvents(ctx, selectEvent+` WHERE owner = ? AND occurred_at >= ? AND seq > ? ORDER BY seq LIMIT ?`,
+		owner, fmtTime(since), afterSeq, limit)
 }
 
 // AllEvents returns every owner's events after seq, oldest first. It is

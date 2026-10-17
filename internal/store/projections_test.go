@@ -199,3 +199,20 @@ func TestRebuildEqualsIncremental(t *testing.T) {
 		t.Fatalf("rebuild differs from incremental:\nbefore %v\nafter  %v", before, after)
 	}
 }
+
+func TestParentMustBelongToOwner(t *testing.T) {
+	s, _ := open(t)
+	a := fx{t: t, s: s, owner: addUser(t, s, "+1").ID}
+	b := fx{t: t, s: s, owner: addUser(t, s, "+2").ID}
+	msg := a.raw("hi", time.Now())
+	var inv *InvalidEventError
+	if _, err := b.derive("review.flagged", msg.ID, map[string]string{}); !errors.As(err, &inv) {
+		t.Fatalf("cross-owner parent: want InvalidEventError, got %v", err)
+	}
+	if _, err := a.derive("review.flagged", "missing", map[string]string{}); !errors.As(err, &inv) {
+		t.Fatalf("unknown parent: want InvalidEventError, got %v", err)
+	}
+	if _, err := a.derive("review.flagged", msg.ID, map[string]string{}); err != nil {
+		t.Fatal(err)
+	}
+}

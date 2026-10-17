@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/brojonat/lifestream/internal/api"
 	"github.com/brojonat/lifestream/internal/bus"
 	"github.com/brojonat/lifestream/internal/ingest"
 	"github.com/brojonat/lifestream/internal/metrics"
@@ -37,6 +38,12 @@ and LOG_FORMAT=json for machine-readable logs.`,
 				Value:   "127.0.0.1:8080",
 				Usage:   "listen `ADDR`",
 				Sources: cli.EnvVars("LIFESTREAM_ADDR"),
+			},
+			&cli.StringFlag{
+				Name:    "api-addr",
+				Value:   "127.0.0.1:8081",
+				Usage:   "listen `ADDR` for the agent's internal API; never expose it",
+				Sources: cli.EnvVars("LIFESTREAM_API_ADDR"),
 			},
 			dataDirFlag(),
 			&cli.StringFlag{
@@ -122,29 +129,43 @@ func runServe(ctx context.Context, cmd *cli.Command) error {
 		App: "Lifestream", Store: store, Log: log,
 		Collector: collector, MetricsKV: mkv, MetricsStream: mstream, JS: b.JS(), DataDir: dataDir, Interval: interval,
 	}))
-	srv := &http.Server{
-		Handler:           mux,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
-		ReadHeaderTimeout: 10 * time.Second,
-		// No WriteTimeout: it would sever the SSE streams.
+	servers := []*http.Server{newServer(ctx, mux), newServer(ctx, api.NewHandler(st, log))}
+	apiAddr := cmd.String("api-addr")
+	apiLn, err := net.Listen("tcp", apiAddr)
+	if err != nil {
+		ln.Close()
+		return fmt.Errorf("listening on %s: %w", apiAddr, err)
 	}
 
-	errc := make(chan error, 1)
-	go func() { errc <- srv.Serve(ln) }()
-	log.Info("listening", "url", "http://"+ln.Addr().String(), "data_dir", dataDir)
+	errc := make(chan error, 2)
+	go func() { errc <- servers[0].Serve(ln) }()
+	go func() { errc <- servers[1].Serve(apiLn) }()
+	log.Info("listening", "url", "http://"+ln.Addr().String(), "api", "http://"+apiLn.Addr().String(), "data_dir", dataDir)
 
+	var serveErr error
 	select {
 	case err := <-errc:
-		return fmt.Errorf("serving: %w", err)
+		serveErr = fmt.Errorf("serving: %w", err)
 	case <-ctx.Done():
 	}
 	log.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("shutdown: %w", err)
+	for _, srv := range servers {
+		if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErr = errors.Join(serveErr, fmt.Errorf("shutdown: %w", err))
+		}
 	}
-	return nil
+	return serveErr
+}
+
+func newServer(ctx context.Context, h http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           h,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+		ReadHeaderTimeout: 10 * time.Second,
+		// No WriteTimeout: it would sever the SSE streams.
+	}
 }
 
 // newLogger builds a slog logger from LOG_LEVEL and LOG_FORMAT.
