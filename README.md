@@ -71,6 +71,8 @@ Public listener (`--addr`, what the ingress exposes):
 | `GET /inbox` | The last 50 raw events and what each became (labels, values, flags); flagged ones highlighted |
 | `GET /collections`, `GET /c/{id}` | Collections; one collection's definition history (each version) and members |
 | `POST /c/{id}/remove`, `POST /inbox/add` | Owner corrections: append `label.corrected` (source `dashboard`), which goes to the agent like any raw event |
+| `GET /log`, `POST /log/{id}/undo` | Rule log: every `collection.*` change, with one-click undo (appends the inverse: stop, resume, or `collection.amended {remove_rule}` / re-add) |
+| `POST /review/{id}/answer` | Answer a `review.flagged` question (queue at the top of the inbox); appends `review.answered`, which goes to the agent |
 | `GET /rules`, `POST /rules`, `POST /rules/{id}/remove` | The rules doc: the owner's standing instructions (`rule.added` / `rule.removed`), which the agent reads before every event |
 | `GET /admin` | Process diagnostics |
 | `GET /healthz` | `ok` |

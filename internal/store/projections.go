@@ -46,6 +46,7 @@ type (
 		CollectionID string `json:"collection_id"`
 		Include      string `json:"include,omitempty"`
 		Exclude      string `json:"exclude,omitempty"`
+		RemoveRule   string `json:"remove_rule,omitempty"` // event id of the amendment that added it
 	}
 	CollectionRef struct {
 		CollectionID string `json:"collection_id"`
@@ -172,16 +173,35 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 		if err := decode(e, &p); err != nil {
 			return err
 		}
-		if (p.Include == "") == (p.Exclude == "") {
-			return invalid("%s needs exactly one of include or exclude", e.Type)
+		set := 0
+		for _, f := range []string{p.Include, p.Exclude, p.RemoveRule} {
+			if f != "" {
+				set++
+			}
+		}
+		if set != 1 {
+			return invalid("%s needs exactly one of include, exclude or remove_rule", e.Type)
 		}
 		c, err := collectionTx(ctx, tx, e.Owner, p.CollectionID)
 		if err != nil {
 			return err
 		}
+		if p.RemoveRule == c.ID {
+			return invalid("the rule a collection started with can't be removed; stop the collection instead")
+		}
 		v, err := bump(ctx, tx, c, e, c.Status)
 		if err != nil {
 			return err
+		}
+		if p.RemoveRule != "" {
+			res, err := tx.ExecContext(ctx, `DELETE FROM collection_rules WHERE collection_id = ? AND event_id = ?`, c.ID, p.RemoveRule)
+			if err != nil {
+				return fmt.Errorf("projecting %s: %w", e.Type, err)
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				return invalid("collection %s has no rule %q", c.ID, p.RemoveRule)
+			}
+			return nil
 		}
 		if p.Include != "" {
 			return addRule(ctx, tx, c.ID, v, "include", p.Include, e.ID)
@@ -668,4 +688,29 @@ func (s *Store) Rules(ctx context.Context, owner string) ([]OwnerRule, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// SteeringLog returns an owner's collection.* events, newest first.
+func (s *Store) SteeringLog(ctx context.Context, owner string, limit int) ([]Event, error) {
+	return s.queryEvents(ctx, selectEvent+` WHERE owner = ? AND type IN (?, ?, ?, ?) ORDER BY seq DESC LIMIT ?`,
+		owner, TypeCollectionStarted, TypeCollectionAmended, TypeCollectionStopped, TypeCollectionResumed, limit)
+}
+
+// HasRule reports whether the amendment eventID's rule is still part of the
+// collection's definition.
+func (s *Store) HasRule(ctx context.Context, collectionID, eventID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM collection_rules WHERE collection_id = ? AND event_id = ?`, collectionID, eventID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("reading rule: %w", err)
+	}
+	return n > 0, nil
+}
+
+// OpenFlags returns an owner's review.flagged events that have no
+// review.answered child yet, oldest first.
+func (s *Store) OpenFlags(ctx context.Context, owner string) ([]Event, error) {
+	return s.queryEvents(ctx, selectEvent+` WHERE owner = ? AND type = 'review.flagged'
+		AND NOT EXISTS (SELECT 1 FROM events a WHERE a.parent_id = events.id AND a.type = 'review.answered')
+		ORDER BY seq`, owner)
 }

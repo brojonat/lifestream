@@ -168,8 +168,9 @@ type inboxRow struct {
 
 type inboxData struct {
 	pageData
-	Rows []inboxRow
-	Open []store.Collection // targets for "add to…"
+	Rows  []inboxRow
+	Open  []store.Collection // targets for "add to…"
+	Flags []flagRow          // questions waiting for the owner
 }
 
 const inboxSize = 50
@@ -188,7 +189,11 @@ func (s *Server) inboxView(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	data := inboxData{pageData: s.base("Inbox", "/inbox/stream", "inbox"), Open: open}
+	flags, err := s.flags(ctx, u.ID)
+	if err != nil {
+		return nil, err
+	}
+	data := inboxData{pageData: s.base("Inbox", "/inbox/stream", "inbox"), Open: open, Flags: flags}
 	for _, it := range items {
 		data.Rows = append(data.Rows, buildRow(it))
 	}

@@ -373,3 +373,100 @@ func TestRulesPage(t *testing.T) {
 		t.Fatalf("rules after remove: %+v", rules)
 	}
 }
+
+func TestRuleLogUndo(t *testing.T) {
+	ctx := context.Background()
+	h, st, _ := newServer(t)
+	u, _, _ := st.AddUser(ctx, "me", "+1")
+	w := world{t, st, u.ID}
+	now := time.Now()
+	mig := w.add(store.SourceAgent, store.TypeCollectionStarted, "", now, store.CollectionStarted{Name: "pg migration", Include: "postgres migration work"})
+	inc := w.add(store.SourceAgent, store.TypeCollectionAmended, "", now, store.CollectionAmended{CollectionID: mig.ID, Include: "pgbouncer stuff"})
+	stop := w.add(store.SourceAgent, store.TypeCollectionStopped, "", now, store.CollectionRef{CollectionID: mig.ID})
+
+	body := do(t, h, "GET", "/log", "").Body.String()
+	for _, want := range []string{"pg migration</a>: stopped", "+ include pgbouncer stuff", "undo (resume it)", "undo (remove rule)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("log missing %q", want)
+		}
+	}
+	if strings.Contains(body, "undo (stop it)") {
+		t.Errorf("a stopped collection's start has nothing to undo")
+	}
+
+	// A misread "stop capturing" is one click to fix.
+	if rec := do(t, h, "POST", "/log/"+stop.ID+"/undo", ""); rec.Code != 204 {
+		t.Fatalf("undo stop: %d %s", rec.Code, rec.Body.String())
+	}
+	if c, _ := st.Collection(ctx, mig.ID); c.Status != "open" {
+		t.Fatalf("undo should resume: %s", c.Status)
+	}
+	if rec := do(t, h, "POST", "/log/"+stop.ID+"/undo", ""); rec.Code != 409 {
+		t.Fatalf("second undo of the same stop: %d", rec.Code)
+	}
+	if body := do(t, h, "GET", "/log", "").Body.String(); strings.Count(body, "undo (stop it)") != 1 {
+		t.Errorf("only the newest status change offers undo; got %d", strings.Count(body, "undo (stop it)"))
+	}
+	// Undo an include, then undo the removal.
+	if rec := do(t, h, "POST", "/log/"+inc.ID+"/undo", ""); rec.Code != 204 {
+		t.Fatalf("undo include: %d %s", rec.Code, rec.Body.String())
+	}
+	log, _ := st.SteeringLog(ctx, u.ID, 1)
+	if rec := do(t, h, "POST", "/log/"+log[0].ID+"/undo", ""); rec.Code != 204 {
+		t.Fatalf("undo removal: %d %s", rec.Code, rec.Body.String())
+	}
+	c, _ := st.Collection(ctx, mig.ID)
+	if len(c.Rules) != 2 || c.Rules[1].Text != "pgbouncer stuff" {
+		t.Fatalf("rule should be back: %+v", c.Rules)
+	}
+	if rec := do(t, h, "POST", "/log/nope/undo", ""); rec.Code != 404 {
+		t.Fatalf("unknown: %d", rec.Code)
+	}
+	// Undos are the owner's events: they go to the agent.
+	pending, _ := st.Undelivered(ctx, 100)
+	if n := len(pending); n != 3 {
+		t.Fatalf("want 3 dashboard events queued for the agent, got %d", n)
+	}
+}
+
+func TestReviewQueue(t *testing.T) {
+	ctx := context.Background()
+	h, st, _ := newServer(t)
+	u, _, _ := st.AddUser(ctx, "me", "+1")
+	w := world{t, st, u.ID}
+	msg := w.add("twilio.sms", "message.received", "", time.Now(), map[string]string{"Body": "w 17"})
+	flag := w.add(store.SourceAgent, "review.flagged", msg.ID, time.Now(), map[string]string{"question": "Is 17 a weight?"})
+
+	body := do(t, h, "GET", "/inbox", "").Body.String()
+	for _, want := range []string{"Needs your answer", "Is 17 a weight?", "about: “w 17”", "/review/" + flag.ID + "/answer"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("inbox missing %q", want)
+		}
+	}
+	if rec := do(t, h, "POST", "/review/"+flag.ID+"/answer", "answer=+"); rec.Code != 400 {
+		t.Fatalf("empty answer: %d", rec.Code)
+	}
+	// The page posts {payload: {answer}} as JSON.
+	req := httptest.NewRequest("POST", "/review/"+flag.ID+"/answer", strings.NewReader(`{"answer":"no, I meant 177"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 204 {
+		t.Fatalf("answer: %d %s", rec.Code, rec.Body.String())
+	}
+	if body := do(t, h, "GET", "/inbox", "").Body.String(); strings.Contains(body, "Needs your answer") {
+		t.Errorf("answered flag should leave the queue")
+	}
+	pending, _ := st.Undelivered(ctx, 100)
+	var answer store.Event
+	for _, e := range pending {
+		if e.Type == "review.answered" {
+			answer = e
+		}
+	}
+	var p map[string]string
+	json.Unmarshal(answer.Payload, &p)
+	if answer.ParentID != flag.ID || p["question"] != "Is 17 a weight?" || p["answer"] != "no, I meant 177" || p["event_id"] != msg.ID {
+		t.Fatalf("answer event: %+v %v", answer, p)
+	}
+}

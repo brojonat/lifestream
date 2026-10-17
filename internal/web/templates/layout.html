@@ -75,6 +75,13 @@
   ul.rules li { display: flex; gap: .75rem; align-items: baseline; padding: .5rem 0;
     border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
   ul.rules li .text { flex: 1; }
+  section.review { margin: 0 0 1.5rem; padding: .75rem 1rem; border-radius: 8px;
+    background: color-mix(in srgb, var(--status-warning) 12%, transparent); border: 1px solid var(--status-warning); }
+  section.review article { padding: .5rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
+  section.review article:last-child { border-bottom: 0; }
+  section.review form { display: flex; gap: .5rem; margin-top: .35rem; }
+  section.review input { flex: 1; padding: .35rem .55rem; border-radius: 6px; background: var(--surface); color: inherit;
+    border: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
   details.add summary { display: inline-block; list-style: none; }
   details.add form { display: flex; gap: .4rem; margin-top: .35rem; }
   details.add select { padding: .15rem .3rem; border-radius: 6px; background: transparent; color: inherit;
@@ -120,6 +127,7 @@
     <a href="/inbox" {{if eq .Nav "inbox"}}aria-current="page"{{end}}>inbox</a>
     <a href="/collections" {{if eq .Nav "collections"}}aria-current="page"{{end}}>collections</a>
     <a href="/rules" {{if eq .Nav "rules"}}aria-current="page"{{end}}>rules</a>
+    <a href="/log" {{if eq .Nav "log"}}aria-current="page"{{end}}>log</a>
     <a href="/admin" {{if eq .Nav "admin"}}aria-current="page"{{end}}>diagnostics</a>
   </nav>
 </header>

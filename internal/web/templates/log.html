@@ -1,0 +1,16 @@
+{{define "region"}}<main id="log">
+<div class="row"><h2>Rule log</h2><span class="muted">every change to a collection's definition, newest first</span></div>
+{{if not .Rows}}<p class="empty">No changes yet.</p>
+{{else}}<table class="inbox">
+<thead><tr><th>When</th><th>Change</th><th>By</th><th></th></tr></thead>
+<tbody>
+{{range .Rows}}<tr>
+  <td class="when">{{.At | ago}}</td>
+  <td class="text"><a href="/c/{{.CollID}}">{{.Collection}}</a>: {{if eq .What "started"}}started, include {{.Text}}{{else if eq .What "include"}}+ include {{.Text}}{{else if eq .What "exclude"}}− exclude {{.Text}}{{else}}{{.What}}{{end}}</td>
+  <td class="became muted">{{.By}}</td>
+  <td class="state">{{if .Undo}}<form data-on:submit="@post('/log/{{.ID}}/undo')"><button class="quiet" type="submit">{{.Undo}}</button></form>{{end}}</td>
+</tr>
+{{end}}</tbody>
+</table>{{end}}
+</main>
+{{end}}

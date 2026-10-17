@@ -89,7 +89,7 @@ type Server struct {
 // NewHandler wires the routes.
 func NewHandler(d Deps) http.Handler {
 	s := &Server{Deps: d, pages: map[string]*template.Template{}}
-	for _, name := range []string{"metrics", "inbox", "collections", "collection", "rules", "admin"} {
+	for _, name := range []string{"metrics", "inbox", "collections", "collection", "rules", "log", "admin"} {
 		s.pages[name] = template.Must(template.New("").Funcs(funcs).ParseFS(files,
 			"templates/layout.html", "templates/"+name+".html"))
 	}
@@ -109,6 +109,10 @@ func NewHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /c/{id}", s.page("collection", s.collectionView))
 	mux.HandleFunc("GET /c/{id}/stream", s.stream("collection", s.collectionView, s.storeWatch))
 	mux.HandleFunc("POST /c/{id}/remove", s.removeMember)
+	mux.HandleFunc("GET /log", s.page("log", s.logView))
+	mux.HandleFunc("GET /log/stream", s.stream("log", s.logView, s.storeWatch))
+	mux.HandleFunc("POST /log/{id}/undo", s.undoSteering)
+	mux.HandleFunc("POST /review/{id}/answer", s.answerFlag)
 	mux.HandleFunc("GET /rules", s.page("rules", s.rulesView))
 	mux.HandleFunc("GET /rules/stream", s.stream("rules", s.rulesView, s.storeWatch))
 	mux.HandleFunc("POST /rules", s.addRule)

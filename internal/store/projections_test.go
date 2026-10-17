@@ -260,3 +260,36 @@ func TestRulesDoc(t *testing.T) {
 	other := fx{t: t, s: f.s, owner: addUser(t, f.s, "+9").ID}
 	other.mustReject(TypeRuleRemoved, RuleRemoved{RuleID: rules[0].ID})
 }
+
+func TestRemoveRuleAndFlags(t *testing.T) {
+	ctx := context.Background()
+	f, ids := weightStory(t)
+	w := ids["weight"]
+	c, _ := f.s.Collection(ctx, w)
+	include := c.Rules[1] // "w <number> also means weight", added at v2
+	f.mustReject(TypeCollectionAmended, CollectionAmended{CollectionID: w, RemoveRule: w})
+	f.mustReject(TypeCollectionAmended, CollectionAmended{CollectionID: w, RemoveRule: "nope"})
+	f.mustReject(TypeCollectionAmended, CollectionAmended{CollectionID: w, Include: "x", RemoveRule: include.EventID})
+	f.must(TypeCollectionAmended, "", CollectionAmended{CollectionID: w, RemoveRule: include.EventID})
+	c, _ = f.s.Collection(ctx, w)
+	if c.Version != 4 || len(c.Rules) != 2 {
+		t.Fatalf("after removing a rule: v%d %+v", c.Version, c.Rules)
+	}
+	if ok, _ := f.s.HasRule(ctx, w, include.EventID); ok {
+		t.Fatal("rule should be gone")
+	}
+	log, _ := f.s.SteeringLog(ctx, f.owner, 50)
+	if len(log) != 7 || log[0].Type != TypeCollectionAmended {
+		t.Fatalf("steering log: %d events, newest %s", len(log), log[0].Type)
+	}
+
+	msg := f.raw("w 17", time.Now())
+	flag := f.must("review.flagged", msg.ID, map[string]string{"question": "is 17 a weight?"})
+	if open, _ := f.s.OpenFlags(ctx, f.owner); len(open) != 1 || open[0].ID != flag.ID {
+		t.Fatalf("open flags: %v", open)
+	}
+	f.s.Append(ctx, Event{Owner: f.owner, Source: "dashboard", Type: "review.answered", ParentID: flag.ID, Payload: json.RawMessage(`{"answer":"no, typo"}`)})
+	if open, _ := f.s.OpenFlags(ctx, f.owner); len(open) != 0 {
+		t.Fatalf("answered flag still open: %v", open)
+	}
+}

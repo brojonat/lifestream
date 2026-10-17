@@ -1,5 +1,15 @@
 {{define "region"}}<main id="inbox">
-<div class="row"><h2>Inbox</h2><span class="muted">the last {{len .Rows}} things you sent, and what each became</span></div>
+{{if .Flags}}<section class="review" aria-labelledby="review-h">
+<h2 id="review-h">⚠ Needs your answer <span class="muted">({{len .Flags}})</span></h2>
+{{range .Flags}}<article>
+  <div>{{.Question}}</div>
+  {{with .Original}}<div class="muted">about: “{{trunc 140 .}}”</div>{{end}}
+  <form data-on:submit="@post('/review/{{.ID}}/answer', {payload: {answer: el.elements.answer.value}}); el.reset()">
+    <input name="answer" required aria-label="your answer" data-ignore-morph placeholder="Your answer goes to the agent">
+    <button class="quiet" type="submit">Answer</button></form>
+</article>
+{{end}}</section>
+{{end}}<div class="row"><h2>Inbox</h2><span class="muted">the last {{len .Rows}} things you sent, and what each became</span></div>
 {{if not .Rows}}<p class="empty">Nothing yet. Text the number, or <code>lifestream push</code> some JSON.</p>
 {{else}}<table class="inbox">
 <thead><tr><th>When</th><th>What you sent</th><th>Became</th><th>Status</th></tr></thead>
