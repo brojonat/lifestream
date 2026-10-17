@@ -176,21 +176,24 @@ func TestPushEvents(t *testing.T) {
 	owner, token, _ := st.AddUser(ctx, "me", "+15555550100")
 	h := Events(st, quiet)
 
-	bodies := map[string]string{
-		"object": `{"type":"note","source":"cli","payload":{"text":"one"}}`,
-		"array":  `[{"type":"note","payload":{"text":"two"}},{"type":"note","payload":{"text":"three"}}]`,
-		"jsonl":  "{\"type\":\"note\",\"payload\":{\"text\":\"four\"}}\n{\"type\":\"note\",\"occurred_at\":\"2026-10-01T08:00:00Z\"}\n",
+	// In order: the assertions below check which event came first.
+	cases := []struct {
+		name, body string
+		want       int
+	}{
+		{"object", `{"type":"note","source":"cli","payload":{"text":"one"}}`, 1},
+		{"array", `[{"type":"note","payload":{"text":"two"}},{"type":"note","payload":{"text":"three"}}]`, 2},
+		{"jsonl", "{\"type\":\"note\",\"payload\":{\"text\":\"four\"}}\n{\"type\":\"note\",\"occurred_at\":\"2026-10-01T08:00:00Z\"}\n", 2},
 	}
-	want := map[string]int{"object": 1, "array": 2, "jsonl": 2}
-	for name, body := range bodies {
-		rec := postEvents(h, token, body)
+	for _, c := range cases {
+		rec := postEvents(h, token, c.body)
 		if rec.Code != 200 {
-			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body.String())
+			t.Fatalf("%s: %d %s", c.name, rec.Code, rec.Body.String())
 		}
 		var resp struct{ Events []Result }
 		json.Unmarshal(rec.Body.Bytes(), &resp)
-		if len(resp.Events) != want[name] || !resp.Events[0].Created {
-			t.Fatalf("%s: got %+v", name, resp)
+		if len(resp.Events) != c.want || !resp.Events[0].Created {
+			t.Fatalf("%s: got %+v", c.name, resp)
 		}
 	}
 	evs, _ := st.Events(ctx, owner.ID, 0, 10)
