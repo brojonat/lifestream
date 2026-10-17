@@ -33,7 +33,7 @@ from the events.
 everything.
 
 ```
-mise install          # pins Go
+mise install          # pins Go, Node, uv
 mise run setup        # go mod tidy, install air
 mise run dev          # hot reload, http://127.0.0.1:8080, tees logs/serve.log
 mise run dev-agent    # the agent, tees logs/agent.log
@@ -55,6 +55,8 @@ echo '{"type":"note","payload":{"text":"hi"}}' | lifestream push
                                  # POST JSON events from stdin to $LIFESTREAM_URL
 lifestream capture claude-code < hook.json
                                  # from a harness hook: send the transcript's new lines (claude-code, pi, codex)
+lifestream sessions ls           # captured sessions as JSONL, most recently active first
+lifestream sessions show <id>    # one session's messages in the common format, JSONL
 lifestream rebuild               # drop and rebuild every projection from events
 lifestream verify                # check every owner's hash chain
 ```
@@ -123,6 +125,13 @@ is the harness's own JSON, unchanged. A session is the events sharing a
   messages stop joining. An owner's add puts it back.
 - Members that joined this way never pass through the agent; its
   redaction sweep gives them their redacted copy.
+- Every message is also read into one common format, whatever the
+  harness (`internal/transcript`): `{role, parts}`. Roles are user,
+  assistant, tool and system. Parts are text, tool_call (with name,
+  call_id, input), tool_result (call_id, error), reasoning, image or
+  other. This `session_messages` projection is the replay viewer's
+  source. `lifestream rebuild` regenerates it after the format changes,
+  and `lifestream sessions` reads it.
 
 ### Capturing harness sessions
 
@@ -281,6 +290,7 @@ internal/ingest/     /twilio/sms and /events
 internal/api/        the agent's internal API
 internal/dispatch/   delivers raw events to the agent
 internal/capture/    the transcript tailer behind `lifestream capture`, one parser per harness
+internal/transcript/ each harness's message JSON -> the common format (pure functions)
 internal/scan/       the deterministic secret scanner (twin of agent/src/scanner.ts and capture/strands' scan.py)
 internal/bus/        embedded NATS (in-process), backs the diagnostics samples
 internal/metrics/    process metrics, /metrics

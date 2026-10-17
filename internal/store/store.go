@@ -121,6 +121,22 @@ var migrations = []string{
 		sequence   INTEGER NOT NULL
 	);
 	CREATE INDEX session_events_session ON session_events(owner, session_id);`,
+
+	// The common-format view of sessions (internal/transcript), one row per
+	// llm.message: rebuilt from the raw events whenever the format changes.
+	`CREATE TABLE session_messages (
+		event_id    TEXT PRIMARY KEY,
+		owner       TEXT NOT NULL,
+		session_id  TEXT NOT NULL,
+		sequence    INTEGER NOT NULL,
+		harness     TEXT NOT NULL,
+		model       TEXT,
+		cwd         TEXT,
+		role        TEXT NOT NULL,
+		parts       TEXT NOT NULL,
+		occurred_at TEXT NOT NULL
+	);
+	CREATE INDEX session_messages_session ON session_messages(owner, session_id, sequence);`,
 }
 
 // Store is the open database. Writes are serialized by mu so the hash chain

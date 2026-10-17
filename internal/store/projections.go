@@ -448,7 +448,7 @@ func (s *Store) Rebuild(ctx context.Context) error {
 		return fmt.Errorf("rebuilding: %w", err)
 	}
 	defer tx.Rollback()
-	for _, t := range []string{"collections", "collection_rules", "collection_members", "metric_values", "rules", "session_events"} {
+	for _, t := range []string{"collections", "collection_rules", "collection_members", "metric_values", "rules", "session_events", "session_messages"} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+t); err != nil {
 			return fmt.Errorf("rebuilding: clearing %s: %w", t, err)
 		}

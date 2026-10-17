@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -162,5 +163,49 @@ func TestSessionRebuildEqualsIncremental(t *testing.T) {
 	}
 	if after := dump(t, s); !reflect.DeepEqual(before, after) {
 		t.Fatalf("rebuild differs from incremental:\nbefore %v\nafter  %v", before, after)
+	}
+}
+
+func TestCommonFormatView(t *testing.T) {
+	s, _ := open(t)
+	f := fx{t: t, s: s, owner: addUser(t, s, "+1").ID}
+	ctx := context.Background()
+	add := func(owner, sid string, seq int64, msg string) {
+		t.Helper()
+		p := `{"session_id":"` + sid + `","sequence":` + strconv.FormatInt(seq, 10) + `,"harness":"strands","model":"m1","cwd":"/src","message":` + msg + `}`
+		if _, _, err := s.Append(ctx, Event{Owner: owner, Source: "strands", Type: TypeLLMMessage, Payload: json.RawMessage(p)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add(f.owner, "s1", 1, `{"role":"assistant","content":[{"toolUse":{"toolUseId":"t1","name":"shell","input":{}}}]}`)
+	add(f.owner, "s1", 0, `{"role":"user","content":[{"text":"hi"}]}`)
+	add(f.owner, "s1", 2, `{"role":"user","content":[{"toolResult":{"toolUseId":"t1","status":"success","content":[{"text":"ok"}]}}]}`)
+
+	ms, err := s.SessionMessages(ctx, "", "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roles []string
+	for _, m := range ms {
+		roles = append(roles, m.Role)
+	}
+	if !slices.Equal(roles, []string{"user", "assistant", "tool"}) || ms[1].Parts[0].Name != "shell" || ms[0].Model != "m1" {
+		t.Fatalf("messages in sequence order: %+v", ms)
+	}
+	list, err := s.Sessions(ctx, "", 10)
+	if err != nil || len(list) != 1 || list[0].Messages != 3 || list[0].Harness != "strands" || list[0].Cwd != "/src" || !slices.Equal(list[0].Models, []string{"m1"}) {
+		t.Fatalf("sessions: %+v %v", list, err)
+	}
+
+	other := addUser(t, s, "+2").ID
+	add(other, "s1", 0, `{"role":"user","content":[{"text":"same id, someone else"}]}`)
+	if _, err := s.SessionMessages(ctx, "", "s1"); !errors.Is(err, ErrAmbiguous) {
+		t.Fatalf("shared session id without an owner: %v", err)
+	}
+	if ms, err := s.SessionMessages(ctx, other, "s1"); err != nil || len(ms) != 1 {
+		t.Fatalf("with the owner: %v %v", ms, err)
+	}
+	if _, err := s.SessionMessages(ctx, "", "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown session: %v", err)
 	}
 }

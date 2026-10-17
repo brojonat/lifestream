@@ -4,9 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/brojonat/lifestream/internal/transcript"
 )
 
 // TypeLLMMessage is one message, tool call or tool result from a harness
@@ -65,6 +69,9 @@ func applySession(ctx context.Context, tx *sql.Tx, e Event) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO session_events (event_id, owner, session_id, sequence) VALUES (?, ?, ?, ?)`,
 		e.ID, e.Owner, ref.SessionID, *ref.Sequence); err != nil {
 		return fmt.Errorf("projecting %s: %w", e.Type, err)
+	}
+	if err := applyCommonFormat(ctx, tx, e, ref); err != nil {
+		return err
 	}
 	// One existing member per collection carries the label over: its
 	// version and label event, the earliest one by event id.
@@ -155,4 +162,142 @@ func (s *Store) Unredacted(ctx context.Context, owner string, limit int) ([]stri
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// applyCommonFormat adds the message to the common-format view.
+func applyCommonFormat(ctx context.Context, tx *sql.Tx, e Event, ref SessionRef) error {
+	var p struct {
+		Harness string          `json:"harness"`
+		Model   string          `json:"model"`
+		Cwd     string          `json:"cwd"`
+		Message json.RawMessage `json:"message"`
+	}
+	json.Unmarshal(e.Payload, &p) // already valid JSON; missing fields stay empty
+	if p.Harness == "" {
+		p.Harness = e.Source
+	}
+	m := transcript.Normalize(p.Harness, p.Message)
+	parts, err := json.Marshal(m.Parts)
+	if err != nil {
+		return fmt.Errorf("projecting %s: encoding parts: %w", e.Type, err)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO session_messages
+		(event_id, owner, session_id, sequence, harness, model, cwd, role, parts, occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.Owner, ref.SessionID, *ref.Sequence, p.Harness, nullable(p.Model), nullable(p.Cwd), m.Role, string(parts), fmtTime(e.OccurredAt))
+	if err != nil {
+		return fmt.Errorf("projecting %s: common format: %w", e.Type, err)
+	}
+	return nil
+}
+
+// Session summarizes one captured session.
+type Session struct {
+	Owner     string    `json:"owner"`
+	SessionID string    `json:"session_id"`
+	Harness   string    `json:"harness"`
+	Cwd       string    `json:"cwd,omitempty"`
+	Models    []string  `json:"models"`
+	Messages  int       `json:"messages"`
+	First     time.Time `json:"first"`
+	Last      time.Time `json:"last"`
+}
+
+// Sessions returns captured sessions, most recently active first. owner ""
+// means every owner's.
+func (s *Store) Sessions(ctx context.Context, owner string, limit int) ([]Session, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT owner, session_id, min(harness), COALESCE(max(cwd), ''),
+		COALESCE(group_concat(DISTINCT model), ''), count(*), min(occurred_at), max(occurred_at)
+		FROM session_messages WHERE (? = '' OR owner = ?) GROUP BY owner, session_id
+		ORDER BY max(occurred_at) DESC LIMIT ?`, owner, owner, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing sessions: %w", err)
+	}
+	defer rows.Close()
+	out := []Session{}
+	for rows.Next() {
+		var x Session
+		var models, first, last string
+		if err := rows.Scan(&x.Owner, &x.SessionID, &x.Harness, &x.Cwd, &models, &x.Messages, &first, &last); err != nil {
+			return nil, fmt.Errorf("listing sessions: %w", err)
+		}
+		x.Models = []string{}
+		if models != "" {
+			x.Models = strings.Split(models, ",")
+		}
+		if x.First, err = parseTime(first); err != nil {
+			return nil, err
+		}
+		if x.Last, err = parseTime(last); err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+// SessionMessage is one message of a session in the common format.
+type SessionMessage struct {
+	EventID    string    `json:"event_id"`
+	Sequence   int64     `json:"sequence"`
+	Harness    string    `json:"harness"`
+	Model      string    `json:"model,omitempty"`
+	OccurredAt time.Time `json:"occurred_at"`
+	transcript.Message
+}
+
+// ErrAmbiguous means a session id is used by more than one owner.
+var ErrAmbiguous = errors.New("session id belongs to more than one owner; name the owner")
+
+// SessionMessages returns one session's messages in sequence order. owner
+// "" works when only one owner has that session id.
+func (s *Store) SessionMessages(ctx context.Context, owner, sessionID string) ([]SessionMessage, error) {
+	if owner == "" {
+		var owners []string
+		rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT owner FROM session_messages WHERE session_id = ?`, sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("reading session: %w", err)
+		}
+		for rows.Next() {
+			var o string
+			rows.Scan(&o)
+			owners = append(owners, o)
+		}
+		rows.Close()
+		switch len(owners) {
+		case 0:
+			return nil, ErrNotFound
+		case 1:
+			owner = owners[0]
+		default:
+			return nil, ErrAmbiguous
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT event_id, sequence, harness, COALESCE(model, ''), role, parts, occurred_at
+		FROM session_messages WHERE owner = ? AND session_id = ? ORDER BY sequence`, owner, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("reading session: %w", err)
+	}
+	defer rows.Close()
+	var out []SessionMessage
+	for rows.Next() {
+		var m SessionMessage
+		var parts, at string
+		if err := rows.Scan(&m.EventID, &m.Sequence, &m.Harness, &m.Model, &m.Role, &parts, &at); err != nil {
+			return nil, fmt.Errorf("reading session: %w", err)
+		}
+		if err := json.Unmarshal([]byte(parts), &m.Parts); err != nil {
+			return nil, fmt.Errorf("reading session: parts of %s: %w", m.EventID, err)
+		}
+		if m.OccurredAt, err = parseTime(at); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading session: %w", err)
+	}
+	if len(out) == 0 {
+		return nil, ErrNotFound
+	}
+	return out, nil
 }

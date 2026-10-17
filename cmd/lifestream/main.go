@@ -24,6 +24,7 @@ func main() {
 			usersCommand(),
 			pushCommand(),
 			captureCommand(),
+			sessionsCommand(),
 			verifyCommand(),
 			rebuildCommand(),
 		},
