@@ -34,6 +34,15 @@ streams of data they choose to share. We ship them clients that make
 uploading easy, which is why the event store exists. Everything else serves
 making it easy for them to market and sell those streams.
 
+**Delivery is the differentiator** (2026-10-17). Whatever a buyer pays for
+is delivered as an environment. We email them a link, and they drop into a
+preconfigured Sprite or exe.dev box over Tailscale SSH or rex. Raw data is
+in `/data`. Harness sessions are where the harness keeps them (`~/.pi`,
+`~/.claude`, ...). Artifacts and everything else are files. Buyers can
+serve files over HTTP to grab them, or email them out: the agents on the
+box come with an email tool. It's fine if sellers use the platform only to
+set up environments and sell access somewhere else, like Patreon.
+
 ## Origin
 
 It started with a chore: typing the date and my weight into a spreadsheet
@@ -258,7 +267,8 @@ does nothing.
 | Rex environment (see below) | Share or unshare the buyer's own environment on the tailnet | Yes |
 | YouTube unlisted, any other link | Send the link | Honor system |
 
-Start with the hosted viewer plus honor-system links. Add enforced channels
+Since 2026-10-17 the environment is the lead channel: anything sold can be
+delivered as files on the buyer's box. Start with the hosted viewer plus honor-system links. Add enforced channels
 when sellers ask for them. Per-buyer watermarking makes leaks traceable on
 any channel.
 
