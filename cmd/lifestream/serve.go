@@ -15,6 +15,7 @@ import (
 
 	"github.com/brojonat/lifestream/internal/api"
 	"github.com/brojonat/lifestream/internal/bus"
+	"github.com/brojonat/lifestream/internal/dispatch"
 	"github.com/brojonat/lifestream/internal/ingest"
 	"github.com/brojonat/lifestream/internal/metrics"
 	"github.com/brojonat/lifestream/internal/state"
@@ -46,6 +47,11 @@ and LOG_FORMAT=json for machine-readable logs.`,
 				Sources: cli.EnvVars("LIFESTREAM_API_ADDR"),
 			},
 			dataDirFlag(),
+			&cli.StringFlag{
+				Name:    "agent-url",
+				Usage:   "the agent's base `URL`; without it raw events queue undelivered",
+				Sources: cli.EnvVars("LIFESTREAM_AGENT_URL"),
+			},
 			&cli.StringFlag{
 				Name:    "public-url",
 				Usage:   "base `URL` as Twilio sees it, for webhook signatures",
@@ -109,6 +115,13 @@ func runServe(ctx context.Context, cmd *cli.Command) error {
 	}
 	interval := cmd.Duration("metrics-interval")
 	go metrics.NewSampler(collector, b.JS(), mstream, mkv, log).Run(ctx, interval)
+
+	if agentURL := cmd.String("agent-url"); agentURL != "" {
+		d := dispatch.New(st, agentURL, &http.Client{Timeout: 30 * time.Second}, log, dispatch.Options{})
+		go d.Run(ctx)
+	} else {
+		log.Warn("LIFESTREAM_AGENT_URL unset; events queue until an agent is configured")
+	}
 
 	addr := cmd.String("addr")
 	ln, err := net.Listen("tcp", addr)
