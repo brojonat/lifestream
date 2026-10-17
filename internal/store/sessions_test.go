@@ -79,6 +79,13 @@ func TestOnlyASessionsHeadIsDispatched(t *testing.T) {
 	if !reflect.DeepEqual(ids(got), want) {
 		t.Fatalf("undelivered %v, want %v", ids(got), want)
 	}
+	inbox, err := s.Inbox(context.Background(), f.owner, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inbox) != len(want) || inbox[0].Event.ID != other.ID {
+		t.Fatalf("inbox has %d items, want only the heads (%d), newest first", len(inbox), len(want))
+	}
 }
 
 func TestLabelingOneMessageLabelsTheSession(t *testing.T) {

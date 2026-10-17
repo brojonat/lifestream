@@ -53,6 +53,8 @@ lifestream users add --name me --phone +15555550100
 lifestream users ls              # JSONL
 echo '{"type":"note","payload":{"text":"hi"}}' | lifestream push
                                  # POST JSON events from stdin to $LIFESTREAM_URL
+lifestream capture claude-code < hook.json
+                                 # from a harness hook: send the transcript's new lines
 lifestream rebuild               # drop and rebuild every projection from events
 lifestream verify                # check every owner's hash chain
 ```
@@ -68,7 +70,7 @@ Public listener (`--addr`, what the ingress exposes):
 | `POST /twilio/sms` | Twilio webhook. Verifies `X-Twilio-Signature`, drops unknown senders, appends `message.received`, answers empty TwiML. Never waits on the agent. |
 | `POST /events` | Generic JSON events, `Authorization: Bearer <user token>`. One object, a JSON array, or JSONL; a bad event rejects the whole batch. `llm.message` events (capture adapters) are keyed by `(session_id, sequence)`, so resending a batch is safe; see [Sessions](#sessions). |
 | `GET /` | Metrics: per metric collection, latest / 7-day average / change vs the week before, and a chart of readings with a trailing 7-day average (live over SSE) |
-| `GET /inbox` | The last 50 raw events and what each became (labels, values, flags); flagged ones highlighted |
+| `GET /inbox` | The last 50 raw events and what each became (labels, values, flags); flagged ones highlighted. Of a session, only the head the agent saw |
 | `GET /collections`, `GET /c/{id}` | Collections; one collection's definition history (each version) and members |
 | `POST /c/{id}/remove`, `POST /inbox/add` | Owner corrections: append `label.corrected` (source `dashboard`), which goes to the agent like any raw event |
 | `GET /log`, `POST /log/{id}/undo` | Rule log: every `collection.*` change, with one-click undo (appends the inverse: stop, resume, or `collection.amended {remove_rule}` / re-add) |
@@ -122,6 +124,31 @@ is the harness's own JSON, unchanged. A session is the events sharing a
 - Members that joined this way never pass through the agent; its
   redaction sweep gives them their redacted copy.
 
+### Capturing Claude Code sessions
+
+`lifestream capture <harness>` runs from a harness's end-of-turn hook with
+the hook's JSON on stdin. It reads the transcript from the offset saved
+for the session (`$XDG_STATE_HOME/lifestream/capture/<harness>/<session>.json`,
+default `~/.local/state/...`), sends the new complete lines as
+`llm.message` events (line number = sequence), and saves the offset only
+after the service answers 200. Each event also carries the harness, the
+model, `cwd`, and the git remote (credentials stripped), branch and commit.
+If the service is unreachable it warns on stderr and exits 0, and the next
+turn sends the backlog. It never prints to stdout, which hooks read.
+
+For Claude Code only `user`, `assistant` and `system` lines are sent;
+titles, modes and file-history backups stay on the machine. To install:
+
+```
+go install ./cmd/lifestream          # the hook runs `lifestream` from PATH
+claude plugin marketplace add /path/to/this/repo
+claude plugin install lifestream-capture@lifestream
+```
+
+Nothing is captured until `LIFESTREAM_CAPTURE=on`: set it in a project's
+`mise.toml` `[env]` for that project, or in your shell profile for all of
+them. `LIFESTREAM_DENY` wins even when capture is on.
+
 ## Configuration
 
 Environment variables only (mise loads `.env` if present; never commit it).
@@ -134,8 +161,11 @@ Environment variables only (mise loads `.env` if present; never commit it).
 | `LIFESTREAM_PUBLIC_URL` | serve | Base URL as Twilio sees it, for signature checks |
 | `TWILIO_AUTH_TOKEN` | serve | Verifies Twilio webhooks; `/twilio/sms` is off without it |
 | `LIFESTREAM_AGENT_URL` | serve | Where the dispatcher POSTs raw events (unset: no dispatch) |
-| `LIFESTREAM_URL` | push | Base URL of the service |
-| `LIFESTREAM_TOKEN` | push | A user token from `users add` |
+| `LIFESTREAM_URL` | push, capture | Base URL of the service |
+| `LIFESTREAM_TOKEN` | push, capture | A user token from `users add` |
+| `LIFESTREAM_CAPTURE` | capture | `on` to capture; unset or anything else sends nothing |
+| `LIFESTREAM_DENY` | capture | Colon-separated path globs (`~` allowed) never captured; matches `cwd` or any parent |
+| `XDG_STATE_HOME` | capture | Where capture offsets live (default `~/.local/state`) |
 | `LOG_LEVEL` | all | `debug`, `info`, `warn`, `error` |
 | `LOG_FORMAT` | all | `json` for machine-readable logs |
 
@@ -207,6 +237,7 @@ internal/store/      SQLite: events (append-only, hash chain), users, dispatch s
 internal/ingest/     /twilio/sms and /events
 internal/api/        the agent's internal API
 internal/dispatch/   delivers raw events to the agent
+internal/capture/    the transcript tailer behind `lifestream capture`, one parser per harness
 internal/bus/        embedded NATS (in-process), backs the diagnostics samples
 internal/metrics/    process metrics, /metrics
 internal/web/        dashboard handlers, templates, assets/components.js (d3 + Rocket)
@@ -214,5 +245,7 @@ agent/src/           the Pi Durable agent: main, agent (harness, per-owner conve
                      collections (extension: tools + sections), goapi, server
 agent/test/          faux-model tests, scanner tests, and the end-to-end test
 testdata/secrets.json  fake secrets shared by every scanner (agent now, capture adapters later)
+testdata/claude-code/  a synthetic Claude Code transcript and hook inputs
+capture/claude-code/   the Claude Code plugin (Stop and SessionEnd hooks); .claude-plugin/ is its marketplace
 deploy/              deploy.sh and k8s/ (kustomize; Deployment, PVC, Service, Ingress, Litestream config)
 ```

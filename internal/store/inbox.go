@@ -23,9 +23,11 @@ type Membership struct {
 }
 
 // Inbox returns an owner's most recent raw (non-agent) events, newest
-// first, each with its derived events and current memberships.
+// first, each with its derived events and current memberships. Of a
+// session it shows only the head, the events the agent saw, so one
+// captured session doesn't bury everything else.
 func (s *Store) Inbox(ctx context.Context, owner string, limit int) ([]InboxItem, error) {
-	evs, err := s.queryEvents(ctx, selectEvent+` WHERE owner = ? AND source != ? ORDER BY seq DESC LIMIT ?`, owner, SourceAgent, limit)
+	evs, err := s.queryEvents(ctx, selectEvent+` WHERE owner = ? AND source != ? AND dispatch = 1 ORDER BY seq DESC LIMIT ?`, owner, SourceAgent, limit)
 	if err != nil {
 		return nil, err
 	}
