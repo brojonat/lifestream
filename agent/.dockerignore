@@ -1,0 +1,10 @@
+.git
+.agents
+.claude
+bin
+logs
+tmp
+node_modules
+*.db
+*.db-*
+.env*

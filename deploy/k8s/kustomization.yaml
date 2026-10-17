@@ -1,0 +1,16 @@
+# Rendered by deploy/deploy.sh, which fills {{DOCKER_REPO}}, {{TAG}} and
+# {{HOST}}. Secrets live in the lifestream-env Secret, created by hand:
+#   kubectl -n lifestream create secret generic lifestream-env --from-env-file=.env.prod
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: lifestream
+resources:
+  - namespace.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+configMapGenerator:
+  - name: litestream
+    files:
+      - litestream.yml

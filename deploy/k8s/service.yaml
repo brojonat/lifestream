@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: lifestream
+spec:
+  selector:
+    app: lifestream
+  ports:
+    - { name: http, port: 80, targetPort: http }

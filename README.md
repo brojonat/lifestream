@@ -134,6 +134,28 @@ events through Go's API; its `collections` section lists the open
 definitions before every model request. Tests use pi-ai's faux provider;
 `test/e2e.test.ts` drives the real Go binary.
 
+## Deploy
+
+One pod in namespace `lifestream`: the Go service, the agent and a
+Litestream sidecar sharing a PVC at `/data`. One replica, `Recreate`, since
+SQLite has one writer. An init container restores both databases from the
+replicas when the volume is empty. The agent's API stays on the pod's
+loopback; the Ingress exposes only `/twilio/sms` and `/events` until login
+lands (TODO 24). Use `kubectl -n lifestream port-forward deploy/lifestream
+8080` for the dashboard.
+
+```
+kubectl create namespace lifestream
+kubectl -n lifestream create secret generic lifestream-env --from-env-file=.env.prod
+#   TWILIO_AUTH_TOKEN, ANTHROPIC_API_KEY, LITESTREAM_BUCKET, LITESTREAM_ENDPOINT,
+#   LITESTREAM_ACCESS_KEY_ID, LITESTREAM_SECRET_ACCESS_KEY
+DOCKER_REPO=registry.example.com/me LIFESTREAM_HOST=ls.example.com mise run deploy
+kubectl -n lifestream exec deploy/lifestream -c lifestream -- /lifestream users add --data-dir /data --name me --phone +1555…
+```
+
+Then point the Twilio number's messaging webhook at
+`https://$LIFESTREAM_HOST/twilio/sms` (HTTP POST).
+
 ## Layout
 
 ```
@@ -148,4 +170,5 @@ internal/web/        dashboard handlers, templates, assets/components.js (d3 + R
 agent/src/           the Pi Durable agent: main, agent (harness, per-owner conversations),
                      collections (extension: tools + sections), goapi, server
 agent/test/          faux-model tests and the end-to-end test
+deploy/              deploy.sh and k8s/ (kustomize; Deployment, PVC, Service, Ingress, Litestream config)
 ```

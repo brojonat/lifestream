@@ -1,0 +1,19 @@
+# Both SQLite files are backed up continuously. Credentials and bucket come
+# from the lifestream-env Secret.
+dbs:
+  - path: /data/lifestream.db
+    replicas:
+      - type: s3
+        bucket: ${LITESTREAM_BUCKET}
+        path: lifestream.db
+        endpoint: ${LITESTREAM_ENDPOINT}
+        access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
+        secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}
+  - path: /data/agent.db
+    replicas:
+      - type: s3
+        bucket: ${LITESTREAM_BUCKET}
+        path: agent.db
+        endpoint: ${LITESTREAM_ENDPOINT}
+        access-key-id: ${LITESTREAM_ACCESS_KEY_ID}
+        secret-access-key: ${LITESTREAM_SECRET_ACCESS_KEY}

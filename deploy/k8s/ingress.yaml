@@ -1,0 +1,22 @@
+# Only the ingest routes are public. The dashboard has no login yet
+# (TODO 24); reach it with
+#   kubectl -n lifestream port-forward deploy/lifestream 8080
+# and add "/" here once login lands.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lifestream
+spec:
+  tls:
+    - hosts: ["{{HOST}}"]
+      secretName: lifestream-tls
+  rules:
+    - host: "{{HOST}}"
+      http:
+        paths:
+          - path: /twilio/sms
+            pathType: Exact
+            backend: { service: { name: lifestream, port: { name: http } } }
+          - path: /events
+            pathType: Exact
+            backend: { service: { name: lifestream, port: { name: http } } }

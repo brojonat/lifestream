@@ -37,5 +37,5 @@ description = "Kill whatever listens on port 8080 (an orphaned air child, usuall
 run = "kill $(lsof -nP -t -iTCP:8080 -sTCP:LISTEN) 2>/dev/null || true"
 
 [tasks.deploy]
-description = "Build images and apply k8s manifests (not set up yet, TODO 32)"
-run = 'echo "deploy is not set up yet (TODO 32)" >&2; exit 1'
+description = "Build and push both images at the git commit, apply deploy/k8s (needs DOCKER_REPO, LIFESTREAM_HOST)"
+run = "deploy/deploy.sh"

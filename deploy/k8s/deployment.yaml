@@ -1,0 +1,87 @@
+# One pod: the Go service, the agent, and Litestream, sharing /data.
+# SQLite needs a single writer, so exactly one replica and Recreate (the old
+# pod is gone before the new one opens the files).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lifestream
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: lifestream
+  template:
+    metadata:
+      labels:
+        app: lifestream
+    spec:
+      securityContext:
+        # One uid for every container: Litestream checkpoints both databases,
+        # so it must be able to write the files the other two create.
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        runAsNonRoot: true
+      initContainers:
+        # A fresh volume (new node, lost PVC) restores from the replicas.
+        - name: restore
+          image: litestream/litestream:0.3.13
+          command: ["/bin/sh", "-c"]
+          args: ["for db in lifestream agent; do litestream restore -config /etc/litestream.yml -if-db-not-exists -if-replica-exists /data/$db.db || exit 1; done"]
+          envFrom: [{ secretRef: { name: lifestream-env } }]
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: litestream, mountPath: /etc/litestream.yml, subPath: litestream.yml }
+      containers:
+        - name: lifestream
+          image: "{{DOCKER_REPO}}/lifestream:{{TAG}}"
+          args: ["serve"]
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            - { name: LIFESTREAM_ADDR, value: "0.0.0.0:8080" }
+            # The agent's API stays on the pod's loopback: unreachable from
+            # the Service, the Ingress, or other pods.
+            - { name: LIFESTREAM_API_ADDR, value: "127.0.0.1:8081" }
+            - { name: LIFESTREAM_AGENT_URL, value: "http://127.0.0.1:8082" }
+            - { name: LIFESTREAM_DATA_DIR, value: /data }
+            - { name: LIFESTREAM_PUBLIC_URL, value: "https://{{HOST}}" }
+            - { name: LOG_FORMAT, value: json }
+          envFrom: [{ secretRef: { name: lifestream-env } }]
+          volumeMounts: [{ name: data, mountPath: /data }]
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 30 }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 256Mi }
+        - name: agent
+          image: "{{DOCKER_REPO}}/lifestream-agent:{{TAG}}"
+          env:
+            - { name: AGENT_ADDR, value: "127.0.0.1:8082" }
+            - { name: LIFESTREAM_API_URL, value: "http://127.0.0.1:8081" }
+            - { name: DATA_DIR, value: /data }
+            - { name: HOME, value: /tmp }
+            - { name: LOG_FORMAT, value: json }
+          envFrom: [{ secretRef: { name: lifestream-env } }]
+          volumeMounts: [{ name: data, mountPath: /data }]
+          # Probes run in the pod's network namespace, so loopback works.
+          readinessProbe: { exec: { command: ["node", "-e", "fetch('http://127.0.0.1:8082/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"] }, periodSeconds: 15 }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+        - name: litestream
+          image: litestream/litestream:0.3.13
+          args: ["replicate", "-config", "/etc/litestream.yml"]
+          envFrom: [{ secretRef: { name: lifestream-env } }]
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: litestream, mountPath: /etc/litestream.yml, subPath: litestream.yml }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: lifestream-data }
+        - name: litestream
+          configMap: { name: litestream }
