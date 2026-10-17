@@ -1,12 +1,92 @@
 # Changelog
 
 All notable changes to this project are recorded here, newest first. The
-format follows [Keep a Changelog](https://keepachangelog.com/). No code has
-shipped yet, so entries are grouped by date.
+format follows [Keep a Changelog](https://keepachangelog.com/). Entries are
+grouped by date; nothing is versioned yet.
 
 ## 2026-10-17
 
 ### Changed
+
+- Parked. The Sprite environments product moves to a new project built on
+  `~/projects/game-show`'s sprites code; this repo is a parts bin
+  (TODO.md note at the top).
+- VISION.md, from the owner: the platform for selling subscriptions to
+  data streams is the product, and "two products in one" is the biggest
+  risk. Environments are one product, marketed like custom Halo maps.
+  Artifact collections are premium lab notebooks and textbooks. Network
+  effects are the moat (ratings, "you might also enjoy", leaderboards).
+  exe.dev is a possible Sprites stand-in; Hellō a login option.
+- VISION.md: correction. An entry said every product is delivered as an
+  environment and briefly that buyers queue or bid; both were walked back
+  the same day. Environments are one product; pricing stays Stripe
+  Products.
+- Topic, notification and ordering events are no longer dispatched to the
+  agent (they cost a model call each and filled the inbox).
+- The inbox shows only a session's head, so one captured session can't
+  bury everything else.
+
+### Added
+
+- Chapter order (`collection.ordered`, `POST /c/{id}/move`): set
+  collections get up/down buttons; members show in the owner's order, a
+  book's chapters. (TODO A2)
+- Topics page (`/topics`): create topics, set how far back new subscribers
+  can read, send notifications with a confirmed subscriber count (409 when
+  it changed). (TODO N4, N6)
+- Paid-notification events and projections: `topic.created|amended|
+  subscribed|unsubscribed`, `notification.sent`; subscription periods; the
+  subscriber inbox computed on read. The agent can never send. (TODO N1)
+- Artifacts: `artifact.saved` from the dashboard (`/artifacts`: HTML upload
+  or a claude.ai link) or `lifestream push`; HTML is stored, never rendered
+  on the dashboard origin. (TODO A1)
+- Common-format sessions: `internal/transcript` reads Claude Code, pi,
+  Codex and Strands messages into `{role, parts}`; a rebuildable
+  `session_messages` projection; `lifestream sessions ls|show`. (TODO C7)
+- Strands adapter (`capture/strands`, Python/uv): a hook provider that
+  POSTs each message, retries from memory, and scans with the Python twin
+  of the scanner. (TODO C4)
+- `internal/scan`: the Go twin of the agent's secret scanner, same corpus;
+  capture masks secrets before sending unless `LIFESTREAM_SCAN=off`.
+  (TODO C6)
+- Codex capture through its notify program; the rollout is found by thread
+  id. (TODO C5)
+- pi capture: an extension that runs `lifestream capture pi` after every
+  turn. (TODO C3)
+- `lifestream capture <harness>`: the transcript tailer (saved offsets,
+  batches, git and model metadata) and the Claude Code plugin on Stop and
+  SessionEnd. (TODO C1, C2)
+- Sessions in Go: `llm.message` keyed by `(session_id, sequence)`; only a
+  session's first 3 events reach the agent; labeling one message labels
+  the session and later ones join on arrival; the agent's redaction sweep
+  (`GET /api/unredacted`) covers members that joined that way; the
+  look-back judges only session heads. (TODO C0)
+- Redaction: every labeled event gets one `redaction.created` copy from a
+  background task (scanner, then a model review in chunks). (TODO 21, 23a)
+- Look-back: starting a collection or adding an include labels the last 7
+  days in the background; an exclude re-checks members. (TODO 20)
+- Rule log with undo, and the review queue. (TODO 28)
+- Rules doc: projection, dashboard editor, agent extension. (TODO 22, 29)
+- Dockerfiles and Kubernetes manifests: one pod with the Go service, the
+  agent and Litestream. `/healthz`, `/metrics`, JSON logs, SIGTERM.
+  (TODO 31, 32)
+- The agent: a Pi Durable sidecar (TypeScript) with the collections
+  extension; faux-model tests and an end-to-end test against the real
+  binary. (TODO 16-19, 23)
+- Collections view with owner corrections. (TODO 27)
+- Dashboard: live metrics page and inbox. (TODO 25, 26, 30)
+- Dispatcher: raw events reach the agent in log order. (TODO 15)
+- The agent's internal API on its own listener. (TODO 14)
+- Projections (collections, members, metric values) and `rebuild`.
+  (TODO 13)
+- Ingest: Twilio SMS webhook, `POST /events`, `push`/`users`/`verify`.
+  (TODO 10-12)
+- Event store: append-only SQLite log, hash chain per owner, dispatch
+  state. (TODO 7-9)
+- Go service bootstrapped from the go-local-app template; mise tasks;
+  per-skill install script. (TODO 1-6)
+
+### Changed (docs, earlier the same day)
 
 - VISION.md: public pitch is now "Patreon for data" (title and summary).
   OnlyFans stays recorded as the actual inspiration.

@@ -10,6 +10,10 @@ every design decision behind it, is in [VISION.md](VISION.md). Work in
 flight is in [TODO.md](TODO.md); pitfalls are in [LEARNINGS.md](LEARNINGS.md).
 "Lifestream" is a placeholder name.
 
+**Status (2026-10-17): parked.** The Sprite environments product moves to
+a new project; this repo is kept as a parts bin. See the note at the top
+of [TODO.md](TODO.md).
+
 ## How it fits together
 
 Two processes in one pod, sharing a volume:
