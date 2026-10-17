@@ -24,6 +24,7 @@ func main() {
 			usersCommand(),
 			pushCommand(),
 			verifyCommand(),
+			rebuildCommand(),
 		},
 	}
 	if err := root.Run(context.Background(), os.Args); err != nil {

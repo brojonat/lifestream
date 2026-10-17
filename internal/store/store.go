@@ -54,6 +54,54 @@ var migrations = []string{
 		event_id     TEXT PRIMARY KEY REFERENCES events(id),
 		delivered_at TEXT NOT NULL
 	);`,
+
+	// Projections: rebuilt from events by Rebuild, so no foreign keys.
+	`CREATE TABLE collections (
+		id            TEXT PRIMARY KEY, -- the collection.started event id
+		owner         TEXT NOT NULL,
+		name          TEXT NOT NULL,
+		kind          TEXT NOT NULL,
+		metric        TEXT,
+		unit          TEXT,
+		status        TEXT NOT NULL,
+		version       INTEGER NOT NULL,
+		lookback_days INTEGER,
+		created_at    TEXT NOT NULL,
+		updated_at    TEXT NOT NULL
+	);
+	CREATE INDEX collections_owner ON collections(owner, status);
+
+	CREATE TABLE collection_rules (
+		collection_id TEXT NOT NULL,
+		version       INTEGER NOT NULL,
+		kind          TEXT NOT NULL,
+		text          TEXT NOT NULL,
+		event_id      TEXT NOT NULL,
+		PRIMARY KEY (collection_id, event_id)
+	);
+
+	CREATE TABLE collection_members (
+		collection_id      TEXT NOT NULL,
+		event_id           TEXT NOT NULL,
+		definition_version INTEGER NOT NULL,
+		reason             TEXT NOT NULL,
+		label_event_id     TEXT NOT NULL,
+		labeled_at         TEXT NOT NULL,
+		PRIMARY KEY (collection_id, event_id)
+	);
+	CREATE INDEX collection_members_event ON collection_members(event_id);
+
+	CREATE TABLE metric_values (
+		event_id        TEXT PRIMARY KEY, -- the metric.observed event
+		owner           TEXT NOT NULL,
+		collection_id   TEXT NOT NULL,
+		source_event_id TEXT,
+		metric          TEXT NOT NULL,
+		value           REAL NOT NULL,
+		unit            TEXT,
+		observed_at     TEXT NOT NULL
+	);
+	CREATE INDEX metric_values_collection ON metric_values(collection_id, observed_at);`,
 }
 
 // Store is the open database. Writes are serialized by mu so the hash chain

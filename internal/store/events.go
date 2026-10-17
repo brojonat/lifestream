@@ -109,6 +109,9 @@ func (s *Store) Append(ctx context.Context, e Event) (stored Event, created bool
 	if e.Seq, err = res.LastInsertId(); err != nil {
 		return Event{}, false, fmt.Errorf("reading event seq: %w", err)
 	}
+	if err := apply(ctx, tx, e); err != nil {
+		return Event{}, false, err
+	}
 	if err := tx.Commit(); err != nil {
 		return Event{}, false, fmt.Errorf("committing event: %w", err)
 	}
@@ -248,7 +251,12 @@ func (s *Store) queryEvents(ctx context.Context, query string, args ...any) ([]E
 	return out, nil
 }
 
-func fmtTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
+// timeFormat is fixed-width (always nine fractional digits, always Z) so
+// stored times sort as text in time order. RFC3339Nano trims zeros and
+// doesn't.
+const timeFormat = "2006-01-02T15:04:05.000000000Z"
+
+func fmtTime(t time.Time) string { return t.UTC().Format(timeFormat) }
 
 func parseTime(s string) (time.Time, error) {
 	t, err := time.Parse(time.RFC3339Nano, s)

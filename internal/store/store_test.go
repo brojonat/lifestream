@@ -180,7 +180,7 @@ func TestUndeliveredSurvivesRestart(t *testing.T) {
 	s, path := open(t)
 	u := addUser(t, s, "+1")
 	raw := appendN(t, s, u.ID, 3)
-	if _, _, err := s.Append(ctx, Event{Owner: u.ID, Source: SourceAgent, Type: "label.applied", ParentID: raw[0].ID}); err != nil {
+	if _, _, err := s.Append(ctx, Event{Owner: u.ID, Source: SourceAgent, Type: "review.flagged", ParentID: raw[0].ID}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.MarkDelivered(ctx, raw[0].ID); err != nil {
