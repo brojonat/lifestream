@@ -29,6 +29,11 @@ piracy is not a goal. Revocable access and traceable leaks are.
 The weight log that started this is one event type in the store, and the
 first thing built on it; it is not the product.
 
+**The product is the platform.** People of note sell subscriptions to the
+streams of data they choose to share. We ship them clients that make
+uploading easy, which is why the event store exists. Everything else serves
+making it easy for them to market and sell those streams.
+
 ## Origin
 
 It started with a chore: typing the date and my weight into a spreadsheet
@@ -303,7 +308,8 @@ What that implies for the design:
   server, so there is hardware isolation. It has no route to other buyers'
   Sprites or to our internal network. Outbound internet stays open (or
   allowlisted), because the harnesses below need model APIs and buyers pull
-  their dotfiles from GitHub.
+  their dotfiles from GitHub. [exe.dev](https://exe.dev) is a possible
+  stand-in for Sprites, to look into; Sprites still look like a great fit.
 - **The recipe is the map.** A checkpoint can't start a new Sprite (as far
   as we know, it only rolls back the Sprite that made it), so every buyer's
   Sprite is built fresh from a recipe. The recipe is a `mise.toml`: `[tools]`
@@ -446,7 +452,9 @@ stock" is a launch headline of its own.
   subscribers is one event, not 10,000 rows.
 - **Subscribers need a login.** In-app delivery means buyers sign in, so
   the login choice (TODO D1) covers buyers as well as owners. The email
-  collected at checkout is the natural account key.
+  collected at checkout is the natural account key. [Hellō](https://hello.coop)
+  is a login option to look into: it can help show a creator really is who
+  they say (a well-known developer, say).
 
 **Who buys.**
 
@@ -603,7 +611,7 @@ media and GitHub, and nobody has shown they will pay for them.
 | Buyers won't pay | Free, curated examples may be good enough | Publish one free feed and one paid collection; count subscribers and sales |
 | Sellers can't legally sell their best work | The most valuable traces happen at work, on code the employer owns | Ask five target sellers how much of their AI use is on personal projects |
 | Redaction misses something | One leaked secret loses the seller for good | Run the redaction pipeline on my own traces for a month before selling anything |
-| Two products in one | A personal tracker and a data marketplace have different users | Keep the tracker as the way in, and judge the product on sales |
+| Two products in one (the biggest risk) | A personal tracker and a data marketplace have different users | The product is the platform for selling subscriptions to data streams; the tracker and the event store only serve that. Judge it on sales |
 | Whop, Patreon and Gumroad already exist | They sell subscriptions, Discord access and digital goods today | Compete on capture and curation (content that makes itself), not on the paywall; keep the paywall thin |
 | Pi Durable is experimental | Released Oct 1, 2026; its APIs may change | The event store is ours, so the agent can be replaced without losing data |
 | Rex ships late or changes shape | We're building ahead of rex's Linux server, which isn't out yet and has no auth beyond Tailscale | Keep rex at the edge (the way in), so recipes, Sprites and keys work without it; track its releases closely |
