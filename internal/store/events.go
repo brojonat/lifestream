@@ -83,6 +83,12 @@ func (s *Store) Append(ctx context.Context, e Event) (stored Event, created bool
 		e.IdempotencyKey, session = key, ref
 	}
 
+	if e.Type == TypeArtifactSaved {
+		if _, err := ParseArtifact(e.Payload); err != nil {
+			return Event{}, false, err
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e.ID == "" {

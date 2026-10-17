@@ -2,10 +2,12 @@ package web
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -468,5 +470,52 @@ func TestReviewQueue(t *testing.T) {
 	json.Unmarshal(answer.Payload, &p)
 	if answer.ParentID != flag.ID || p["question"] != "Is 17 a weight?" || p["answer"] != "no, I meant 177" || p["event_id"] != msg.ID {
 		t.Fatalf("answer event: %+v %v", answer, p)
+	}
+}
+
+func TestArtifactsPage(t *testing.T) {
+	ctx := context.Background()
+	h, st, _ := newServer(t)
+	u, _, _ := st.AddUser(ctx, "me", "+1")
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, _ := mw.CreateFormFile("html", "postgres-upgrades.html")
+	fw.Write([]byte(`<!doctype html><title>x</title><script>alert("owned")</script>`))
+	mw.Close()
+	req := httptest.NewRequest("POST", "/artifacts", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 204 {
+		t.Fatalf("upload: %d %s", rec.Code, rec.Body.String())
+	}
+
+	link := func(payload string) int {
+		req := httptest.NewRequest("POST", "/artifacts", strings.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := link(`{"title":"Vacuum, explained","url":"https://claude.ai/public/artifacts/0b7e"}`); code != 204 {
+		t.Fatalf("link: %d", code)
+	}
+	if code := link(`{"title":"x","url":"https://example.com/a"}`); code != 422 {
+		t.Fatalf("a non-claude.ai link: %d", code)
+	}
+
+	page := do(t, h, "GET", "/artifacts", "").Body.String()
+	for _, want := range []string{"postgres-upgrades", "HTML 0.1 KB", "Vacuum, explained", `href="https://claude.ai/public/artifacts/0b7e"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("artifacts page missing %q", want)
+		}
+	}
+	if strings.Contains(page, "owned") {
+		t.Fatal("uploaded HTML must never be rendered on the dashboard")
+	}
+	list, _ := st.Artifacts(ctx, u.ID, 10)
+	if len(list) != 2 || list[1].Source != SourceDashboard {
+		t.Fatalf("artifacts: %+v", list)
 	}
 }

@@ -1,0 +1,20 @@
+{{define "region"}}<main id="artifacts">
+<div class="row"><h2>Artifacts</h2><span class="muted">Claude artifacts you keep: upload the HTML, paste a claude.ai link, or both</span></div>
+<!-- multipart can't use {payload}, so this form isn't reset after posting; the list below shows it landed -->
+<form class="artifact" enctype="multipart/form-data" data-on:submit="@post('/artifacts', {contentType: 'form'})">
+  <input type="text" name="title" aria-label="title" placeholder="title (default: the file name)" data-ignore-morph>
+  <input type="file" name="html" accept=".html,.htm,text/html" required aria-label="artifact HTML" data-ignore-morph>
+  <button class="quiet" type="submit">Upload</button>
+</form>
+<form class="artifact" data-on:submit="@post('/artifacts', {payload: {title: el.elements.title.value, url: el.elements.url.value}}); el.reset()">
+  <input type="text" name="title" required aria-label="title" placeholder="title" data-ignore-morph>
+  <input type="url" name="url" required aria-label="claude.ai link" placeholder="https://claude.ai/public/artifacts/…" data-ignore-morph>
+  <button class="quiet" type="submit">Save link</button>
+</form>
+{{if not .Artifacts}}<p class="empty">No artifacts yet.</p>
+{{else}}<ul class="rules">
+{{range .Artifacts}}<li><span class="text">{{.Title}}</span>
+  <span class="muted">{{if .URL}}<a href="{{.URL}}" rel="noopener noreferrer" target="_blank">claude.ai</a>{{end}}{{if and .URL .HTMLSize}} · {{end}}{{if .HTMLSize}}HTML {{kb .HTMLSize}}{{end}} · {{.SavedAt | ago}}</span></li>
+{{end}}</ul>{{end}}
+</main>
+{{end}}

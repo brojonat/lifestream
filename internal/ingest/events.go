@@ -138,6 +138,11 @@ func DecodeInputs(r io.Reader) ([]Input, error) {
 		if len(in.Payload) > 0 && !json.Valid(in.Payload) {
 			return nil, fmt.Errorf("event %d: payload is not JSON", i+1)
 		}
+		if in.Type == store.TypeArtifactSaved {
+			if _, err := store.ParseArtifact(in.Payload); err != nil {
+				return nil, fmt.Errorf("event %d: %w", i+1, err)
+			}
+		}
 		if in.Type == store.TypeLLMMessage {
 			if _, err := store.ParseSessionRef(in.Payload); err != nil {
 				return nil, fmt.Errorf("event %d: %w", i+1, err)

@@ -41,15 +41,28 @@ func (s *Server) addRule(w http.ResponseWriter, r *http.Request) {
 // {payload: ...}, used where a form resets right after posting) or from a
 // form.
 func field(w http.ResponseWriter, r *http.Request, name string) (string, error) {
+	f, err := fields(w, r, name)
+	return f[name], err
+}
+
+// fields is field for several names from one body.
+func fields(w http.ResponseWriter, r *http.Request, names ...string) (map[string]string, error) {
+	out := map[string]string{}
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		return strings.TrimSpace(r.FormValue(name)), nil
+		for _, n := range names {
+			out[n] = strings.TrimSpace(r.FormValue(n))
+		}
+		return out, nil
 	}
 	var body map[string]any
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
-		return "", err
+		return out, err
 	}
-	v, _ := body[name].(string)
-	return strings.TrimSpace(v), nil
+	for _, n := range names {
+		v, _ := body[n].(string)
+		out[n] = strings.TrimSpace(v)
+	}
+	return out, nil
 }
 
 // removeRule handles POST /rules/{id}/remove.

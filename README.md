@@ -53,6 +53,8 @@ lifestream users add --name me --phone +15555550100
 lifestream users ls              # JSONL
 echo '{"type":"note","payload":{"text":"hi"}}' | lifestream push
                                  # POST JSON events from stdin to $LIFESTREAM_URL
+jq -n --rawfile html notes.html '{type:"artifact.saved",payload:{title:"Postgres notes",html:$html}}' | lifestream push
+                                 # save an artifact from the shell
 lifestream capture claude-code < hook.json
                                  # from a harness hook: send the transcript's new lines (claude-code, pi, codex)
 lifestream sessions ls           # captured sessions as JSONL, most recently active first
@@ -77,6 +79,7 @@ Public listener (`--addr`, what the ingress exposes):
 | `POST /c/{id}/remove`, `POST /inbox/add` | Owner corrections: append `label.corrected` (source `dashboard`), which goes to the agent like any raw event |
 | `GET /log`, `POST /log/{id}/undo` | Rule log: every `collection.*` change, with one-click undo (appends the inverse: stop, resume, or `collection.amended {remove_rule}` / re-add) |
 | `POST /review/{id}/answer` | Answer a `review.flagged` question (queue at the top of the inbox); appends `review.answered`, which goes to the agent |
+| `GET /artifacts`, `POST /artifacts` | Saved Claude artifacts. Post a multipart upload (`title`, `html` file, up to 16 MB) or a claude.ai link (`title`, `url`; https on claude.ai only). Appends `artifact.saved`. The HTML is stored, never rendered on the dashboard's origin |
 | `GET /rules`, `POST /rules`, `POST /rules/{id}/remove` | The rules doc: the owner's standing instructions (`rule.added` / `rule.removed`), which the agent reads before every event |
 | `GET /admin` | Process diagnostics |
 | `GET /healthz` | `ok` |
