@@ -337,6 +337,9 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 	case TypeLLMMessage:
 		return applySession(ctx, tx, e)
 
+	case TypeTopicCreated, TypeTopicAmended, TypeTopicSubscribed, TypeTopicUnsubscribed, TypeNotificationSent:
+		return applyTopic(ctx, tx, e)
+
 	case TypeMetricObserved:
 		var p MetricObserved
 		if err := decode(e, &p); err != nil {
@@ -448,7 +451,7 @@ func (s *Store) Rebuild(ctx context.Context) error {
 		return fmt.Errorf("rebuilding: %w", err)
 	}
 	defer tx.Rollback()
-	for _, t := range []string{"collections", "collection_rules", "collection_members", "metric_values", "rules", "session_events", "session_messages"} {
+	for _, t := range []string{"collections", "collection_rules", "collection_members", "metric_values", "rules", "session_events", "session_messages", "topics", "subscriptions", "notifications"} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+t); err != nil {
 			return fmt.Errorf("rebuilding: clearing %s: %w", t, err)
 		}
