@@ -57,7 +57,7 @@ test("text 'weight 175' end to end", { skip: !existsSync(BIN) && "build ../bin/l
 	let collectionId = "";
 	const faux = fauxProvider();
 	faux.setResponses([
-		(c) => fauxAssistantMessage([fauxToolCall("create_collection", { event_id: eventId(c), name: "weight", kind: "metric", unit: "lb", include: "body weight readings" })], { stopReason: "toolUse" }),
+		(c) => fauxAssistantMessage([fauxToolCall("create_collection", { event_id: eventId(c), name: "weight", kind: "metric", unit: "lb", include: "body weight readings", lookback_days: 0 })], { stopReason: "toolUse" }), // look-back has its own test
 		fauxAssistantMessage([fauxText("started")]),
 		(c) => {
 			const id = eventId(c);
