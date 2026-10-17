@@ -54,7 +54,7 @@ lifestream users ls              # JSONL
 echo '{"type":"note","payload":{"text":"hi"}}' | lifestream push
                                  # POST JSON events from stdin to $LIFESTREAM_URL
 lifestream capture claude-code < hook.json
-                                 # from a harness hook: send the transcript's new lines
+                                 # from a harness hook: send the transcript's new lines (claude-code, pi)
 lifestream rebuild               # drop and rebuild every projection from events
 lifestream verify                # check every owner's hash chain
 ```
@@ -124,7 +124,7 @@ is the harness's own JSON, unchanged. A session is the events sharing a
 - Members that joined this way never pass through the agent; its
   redaction sweep gives them their redacted copy.
 
-### Capturing Claude Code sessions
+### Capturing harness sessions
 
 `lifestream capture <harness>` runs from a harness's end-of-turn hook with
 the hook's JSON on stdin. It reads the transcript from the offset saved
@@ -143,6 +143,14 @@ titles, modes and file-history backups stay on the machine. To install:
 go install ./cmd/lifestream          # the hook runs `lifestream` from PATH
 claude plugin marketplace add /path/to/this/repo
 claude plugin install lifestream-capture@lifestream
+```
+
+pi has no command hooks, so a pi extension does the hook's job: after
+every turn and at shutdown it runs `lifestream capture pi` with the
+session file. Only `message` entries are sent. To install:
+
+```
+cp capture/pi/lifestream.ts ~/.pi/agent/extensions/
 ```
 
 Nothing is captured until `LIFESTREAM_CAPTURE=on`: set it in a project's
@@ -246,6 +254,8 @@ agent/src/           the Pi Durable agent: main, agent (harness, per-owner conve
 agent/test/          faux-model tests, scanner tests, and the end-to-end test
 testdata/secrets.json  fake secrets shared by every scanner (agent now, capture adapters later)
 testdata/claude-code/  a synthetic Claude Code transcript and hook inputs
+testdata/pi/           a synthetic pi session file
 capture/claude-code/   the Claude Code plugin (Stop and SessionEnd hooks); .claude-plugin/ is its marketplace
+capture/pi/            the pi extension (turn_end, session_shutdown); tested from agent/test
 deploy/              deploy.sh and k8s/ (kustomize; Deployment, PVC, Service, Ingress, Litestream config)
 ```

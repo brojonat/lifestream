@@ -278,3 +278,21 @@ func TestGitInfo(t *testing.T) {
 		t.Fatal("not a repo: want nil")
 	}
 }
+
+func TestPiSession(t *testing.T) {
+	g := newRig(t)
+	stdin, _ := json.Marshal(map[string]string{"session_id": "019e-fixture", "transcript_path": "../../testdata/pi/session.jsonl", "cwd": "/home/me/src/pgmig"})
+	res, err := Run(context.Background(), g.cfg, Pi, stdin)
+	if err != nil || res.Sent != 4 {
+		t.Fatalf("run: %+v %v", res, err)
+	}
+	evs := g.messages()
+	if got := sequences(t, evs); !slices.Equal(got, []int64{2, 3, 4, 6}) {
+		t.Fatalf("sequences %v: want the four message entries", got)
+	}
+	var p sent
+	json.Unmarshal(evs[1].Payload, &p)
+	if evs[1].Source != "pi" || p.Model != "claude-haiku-4-5-20251001" {
+		t.Fatalf("assistant event: %+v %+v", evs[1], p)
+	}
+}
