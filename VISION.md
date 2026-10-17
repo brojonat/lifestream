@@ -268,8 +268,8 @@ does nothing.
 | YouTube unlisted, any other link | Send the link | Honor system |
 
 Since 2026-10-17 the environment is the lead channel: anything sold can be
-delivered as files on the buyer's box. Start with the hosted viewer plus honor-system links. Add enforced channels
-when sellers ask for them. Per-buyer watermarking makes leaks traceable on
+delivered as files on the buyer's box. Start with the hosted viewer plus
+honor-system links. Add enforced channels when sellers ask for them. Per-buyer watermarking makes leaks traceable on
 any channel.
 
 ### Environments as products (rex)
