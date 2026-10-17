@@ -21,6 +21,7 @@ import (
 var notForAgent = map[string]bool{
 	TypeTopicCreated: true, TypeTopicAmended: true, TypeTopicSubscribed: true,
 	TypeTopicUnsubscribed: true, TypeNotificationSent: true,
+	TypeCollectionOrdered: true,
 }
 
 // SourceAgent marks events the agent wrote. They are never dispatched back

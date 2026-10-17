@@ -76,6 +76,7 @@ Public listener (`--addr`, what the ingress exposes):
 | `GET /` | Metrics: per metric collection, latest / 7-day average / change vs the week before, and a chart of readings with a trailing 7-day average (live over SSE) |
 | `GET /inbox` | The last 50 raw events and what each became (labels, values, flags); flagged ones highlighted. Of a session, only the head the agent saw |
 | `GET /collections`, `GET /c/{id}` | Collections; one collection's definition history (each version) and members |
+| `POST /c/{id}/move` | `event_id`, `dir` (up or down): reorder a set collection's members, which is a book's chapter order. Appends `collection.ordered` with the whole order. Members left out follow, newest first |
 | `POST /c/{id}/remove`, `POST /inbox/add` | Owner corrections: append `label.corrected` (source `dashboard`), which goes to the agent like any raw event |
 | `GET /log`, `POST /log/{id}/undo` | Rule log: every `collection.*` change, with one-click undo (appends the inverse: stop, resume, or `collection.amended {remove_rule}` / re-add) |
 | `POST /review/{id}/answer` | Answer a `review.flagged` question (queue at the top of the inbox); appends `review.answered`, which goes to the agent |

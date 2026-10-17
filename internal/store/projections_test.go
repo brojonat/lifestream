@@ -170,6 +170,7 @@ func dump(t *testing.T, s *Store) map[string][]map[string]any {
 		"topics":             "id",
 		"subscriptions":      "topic_id, subscriber, started_at",
 		"notifications":      "event_id",
+		"member_order":       "collection_id, event_id",
 	} {
 		rows, err := s.db.Query("SELECT * FROM " + table + " ORDER BY " + order)
 		if err != nil {

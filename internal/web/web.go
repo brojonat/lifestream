@@ -109,6 +109,7 @@ func NewHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /c/{id}", s.page("collection", s.collectionView))
 	mux.HandleFunc("GET /c/{id}/stream", s.stream("collection", s.collectionView, s.storeWatch))
 	mux.HandleFunc("POST /c/{id}/remove", s.removeMember)
+	mux.HandleFunc("POST /c/{id}/move", s.moveMember)
 	mux.HandleFunc("GET /log", s.page("log", s.logView))
 	mux.HandleFunc("GET /log/stream", s.stream("log", s.logView, s.storeWatch))
 	mux.HandleFunc("POST /log/{id}/undo", s.undoSteering)

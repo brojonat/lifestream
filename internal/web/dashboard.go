@@ -237,7 +237,7 @@ func buildRow(it store.InboxItem) inboxRow {
 func eventText(e store.Event) string {
 	var p map[string]any
 	if json.Unmarshal(e.Payload, &p) == nil {
-		for _, k := range []string{"Body", "text", "body"} {
+		for _, k := range []string{"Body", "text", "body", "title"} {
 			if s, ok := p[k].(string); ok {
 				return s
 			}

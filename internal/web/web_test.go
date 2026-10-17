@@ -593,3 +593,37 @@ func TestTopicNameIsEscapedInsideTheConfirm(t *testing.T) {
 		t.Fatalf("topic name breaks out of the JS string: %s", attr)
 	}
 }
+
+func TestMoveChapters(t *testing.T) {
+	ctx := context.Background()
+	h, st, _ := newServer(t)
+	u, _, _ := st.AddUser(ctx, "me", "+1")
+	w := world{t, st, u.ID}
+	book := w.add(store.SourceAgent, store.TypeCollectionStarted, "", time.Now(), store.CollectionStarted{Name: "book", Include: "artifacts"})
+	var ids []string
+	for _, title := range []string{"intro", "vacuum"} {
+		a := w.add(SourceDashboard, store.TypeArtifactSaved, "", time.Now(), store.ArtifactSaved{Title: title, HTML: "<p>x"})
+		w.add(store.SourceAgent, store.TypeLabelApplied, a.ID, time.Now(), store.LabelApplied{EventID: a.ID, CollectionID: book.ID, DefinitionVersion: 1, Reason: "book"})
+		ids = append(ids, a.ID)
+	}
+	move := func(id, dir string) int {
+		req := httptest.NewRequest("POST", "/c/"+book.ID+"/move", strings.NewReader(`{"event_id":"`+id+`","dir":"`+dir+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	page := do(t, h, "GET", "/c/"+book.ID, "").Body.String()
+	if strings.Index(page, "vacuum") > strings.Index(page, "intro") || !strings.Contains(page, "chapter order") {
+		t.Fatal("unordered members should list newest first, with the chapter-order note")
+	}
+	if code := move(ids[0], "up"); code != 204 {
+		t.Fatalf("move intro up: %d", code)
+	}
+	if page = do(t, h, "GET", "/c/"+book.ID, "").Body.String(); strings.Index(page, "intro") > strings.Index(page, "vacuum") {
+		t.Fatal("intro should come first now")
+	}
+	if code := move(ids[0], "up"); code != 422 {
+		t.Fatalf("moving the first chapter up: %d", code)
+	}
+}

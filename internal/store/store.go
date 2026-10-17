@@ -172,6 +172,14 @@ var migrations = []string{
 		sent_at  TEXT NOT NULL
 	);
 	CREATE INDEX notifications_topic ON notifications(topic_id, sent_at);`,
+
+	// The owner's member order (a book's chapters), from collection.ordered.
+	`CREATE TABLE member_order (
+		collection_id TEXT NOT NULL,
+		event_id      TEXT NOT NULL,
+		position      INTEGER NOT NULL,
+		PRIMARY KEY (collection_id, event_id)
+	);`,
 }
 
 // Store is the open database. Writes are serialized by mu so the hash chain
