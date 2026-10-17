@@ -136,6 +136,13 @@ model, `cwd`, and the git remote (credentials stripped), branch and commit.
 If the service is unreachable it warns on stderr and exits 0, and the next
 turn sends the backlog. It never prints to stdout, which hooks read.
 
+Before sending, the deterministic secret scanner (`internal/scan`, the Go
+twin of the agent's, same corpus) masks keys, tokens, private keys,
+connection passwords, emails and phone numbers in every string of the
+message, keeping keys and key order. Those secrets never reach the server.
+The payload says `"scanned": true` and lists `findings`.
+`LIFESTREAM_SCAN=off` sends messages unmasked.
+
 For Claude Code only `user`, `assistant` and `system` lines are sent;
 titles, modes and file-history backups stay on the machine. To install:
 
@@ -184,6 +191,7 @@ Environment variables only (mise loads `.env` if present; never commit it).
 | `LIFESTREAM_TOKEN` | push, capture | A user token from `users add` |
 | `LIFESTREAM_CAPTURE` | capture | `on` to capture; unset or anything else sends nothing |
 | `LIFESTREAM_DENY` | capture | Colon-separated path globs (`~` allowed) never captured; matches `cwd` or any parent |
+| `LIFESTREAM_SCAN` | capture | `off` skips masking secrets before sending (default on) |
 | `XDG_STATE_HOME` | capture | Where capture offsets live (default `~/.local/state`) |
 | `CODEX_HOME` | capture | Where Codex keeps its rollouts (default `~/.codex`) |
 | `LOG_LEVEL` | all | `debug`, `info`, `warn`, `error` |
@@ -258,13 +266,14 @@ internal/ingest/     /twilio/sms and /events
 internal/api/        the agent's internal API
 internal/dispatch/   delivers raw events to the agent
 internal/capture/    the transcript tailer behind `lifestream capture`, one parser per harness
+internal/scan/       the deterministic secret scanner (Go twin of agent/src/scanner.ts)
 internal/bus/        embedded NATS (in-process), backs the diagnostics samples
 internal/metrics/    process metrics, /metrics
 internal/web/        dashboard handlers, templates, assets/components.js (d3 + Rocket)
 agent/src/           the Pi Durable agent: main, agent (harness, per-owner conversations),
                      collections (extension: tools + sections), goapi, server
 agent/test/          faux-model tests, scanner tests, and the end-to-end test
-testdata/secrets.json  fake secrets shared by every scanner (agent now, capture adapters later)
+testdata/secrets.json  fake secrets shared by every scanner (agent/src/scanner.ts, internal/scan)
 testdata/claude-code/  a synthetic Claude Code transcript and hook inputs
 testdata/pi/           a synthetic pi session file
 testdata/codex/        a synthetic Codex rollout and notify payload

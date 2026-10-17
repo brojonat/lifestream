@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/brojonat/lifestream/internal/scan"
 )
 
 // Harness knows one harness's hook input and transcript lines.
@@ -57,7 +59,10 @@ type Config struct {
 	On       bool     // LIFESTREAM_CAPTURE=on
 	Deny     []string // path globs; a match on cwd or any parent skips capture
 	StateDir string   // one offset file per session under here
-	Client   *http.Client
+	// Scan masks secrets (keys, tokens, passwords, emails, phones) in each
+	// message before it leaves the machine, so they never reach the server.
+	Scan   bool
+	Client *http.Client
 	// MaxBatch caps one POST, in bytes (default 4 MB). A line bigger than
 	// MaxLine (default 16 MB) is skipped: it would never fit.
 	MaxBatch, MaxLine int
@@ -172,7 +177,13 @@ func Run(ctx context.Context, cfg Config, h Harness, stdin []byte) (Result, erro
 			cur = after
 			continue
 		}
-		ev, err := event(hook.SessionID, seq, src, info, line)
+		var found []scan.Finding
+		if cfg.Scan {
+			if line, found, err = scan.JSON(line); err != nil {
+				return res, fmt.Errorf("line %d: %w", seq, err)
+			}
+		}
+		ev, err := event(hook.SessionID, seq, src, info, line, cfg.Scan, found)
 		if err != nil {
 			return res, err
 		}
@@ -203,7 +214,9 @@ type Git struct {
 }
 
 // event renders one JSONL line of the POST body.
-func event(sessionID string, seq int64, src Source, info Line, line []byte) ([]byte, error) {
+// scanned says the message went through the secret scan; findings counts
+// what it masked.
+func event(sessionID string, seq int64, src Source, info Line, line []byte, scanned bool, findings []scan.Finding) ([]byte, error) {
 	payload := struct {
 		SessionID string          `json:"session_id"`
 		Sequence  int64           `json:"sequence"`
@@ -211,8 +224,10 @@ func event(sessionID string, seq int64, src Source, info Line, line []byte) ([]b
 		Model     string          `json:"model,omitempty"`
 		Cwd       string          `json:"cwd,omitempty"`
 		Git       *Git            `json:"git,omitempty"`
+		Scanned   bool            `json:"scanned,omitempty"`
+		Findings  []scan.Finding  `json:"findings,omitempty"`
 		Message   json.RawMessage `json:"message"`
-	}{sessionID, seq, src.Harness, info.Model, src.Cwd, src.Git, line}
+	}{sessionID, seq, src.Harness, info.Model, src.Cwd, src.Git, scanned, findings, line}
 	in := struct {
 		Type       string    `json:"type"`
 		Source     string    `json:"source"`

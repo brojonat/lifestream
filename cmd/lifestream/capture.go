@@ -31,6 +31,8 @@ is how Codex's notify program passes it), then the transcript from the offset sa
 for the session, sends the new complete lines, and saves the new offset
 once the service has them. Does nothing unless LIFESTREAM_CAPTURE=on, and
 nothing for a cwd under a LIFESTREAM_DENY glob (colon-separated, ~ allowed).
+Secrets (keys, tokens, passwords, emails, phone numbers) are masked before
+sending unless LIFESTREAM_SCAN=off.
 
 Prints nothing on stdout (hooks read it). If the service can't be reached
 it warns on stderr and exits 0: the next turn sends everything since the
@@ -40,6 +42,7 @@ last success.`,
 			&cli.StringFlag{Name: "token", Sources: cli.EnvVars("LIFESTREAM_TOKEN"), Usage: "API `TOKEN` from users add"},
 			&cli.StringFlag{Name: "capture", Sources: cli.EnvVars("LIFESTREAM_CAPTURE"), Usage: "`on` to capture; anything else captures nothing"},
 			&cli.StringFlag{Name: "deny", Sources: cli.EnvVars("LIFESTREAM_DENY"), Usage: "colon-separated path `GLOBS` never to capture"},
+			&cli.StringFlag{Name: "scan", Sources: cli.EnvVars("LIFESTREAM_SCAN"), Value: "on", Usage: "`off` sends messages without masking secrets first"},
 			&cli.StringFlag{Name: "state-dir", Usage: "where offsets live (default $XDG_STATE_HOME/lifestream/capture)"},
 			&cli.StringFlag{Name: "codex-home", Sources: cli.EnvVars("CODEX_HOME"), Usage: "Codex's `DIR`, for finding rollouts (default ~/.codex)"},
 			&cli.DurationFlag{Name: "timeout", Value: 10 * time.Second, Usage: "per request; hooks wait for this command"},
@@ -78,6 +81,7 @@ last success.`,
 				URL:      cmd.String("url"),
 				Token:    cmd.String("token"),
 				On:       cmd.String("capture") == "on",
+				Scan:     cmd.String("scan") != "off",
 				StateDir: stateDir,
 				Client:   &http.Client{Timeout: cmd.Duration("timeout")},
 			}

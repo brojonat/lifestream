@@ -321,3 +321,33 @@ func TestCodexRolloutFoundByThreadID(t *testing.T) {
 		t.Fatal("an unknown thread should fail")
 	}
 }
+
+func TestScanMasksSecretsBeforeSending(t *testing.T) {
+	g := newRig(t)
+	f, _ := os.OpenFile(g.path, os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString(`{"type":"user","timestamp":"2026-10-17T15:02:00Z","message":{"role":"user","content":"use AKIAIOSFODNN7EXAMPLE, ping +15555550100"}}` + "\n")
+	f.Close()
+	g.cfg.Scan = true
+	if _, err := g.run(); err != nil {
+		t.Fatal(err)
+	}
+	evs := g.messages()
+	last := evs[len(evs)-1]
+	if strings.Contains(string(last.Payload), "AKIA") || strings.Contains(string(last.Payload), "5555550100") {
+		t.Fatalf("a secret reached the server: %s", last.Payload)
+	}
+	var p struct {
+		Scanned  bool
+		Findings []struct{ Kind string }
+		Message  struct{ Message struct{ Content string } }
+	}
+	json.Unmarshal(last.Payload, &p)
+	if !p.Scanned || len(p.Findings) != 2 || p.Message.Message.Content != "use [REDACTED:aws_access_key], ping [REDACTED:phone]" {
+		t.Fatalf("payload %s", last.Payload)
+	}
+	var first struct{ Scanned bool }
+	json.Unmarshal(evs[0].Payload, &first)
+	if !first.Scanned {
+		t.Fatal("clean lines are marked scanned too")
+	}
+}
