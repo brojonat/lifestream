@@ -34,14 +34,24 @@ streams of data they choose to share. We ship them clients that make
 uploading easy, which is why the event store exists. Everything else serves
 making it easy for them to market and sell those streams.
 
-**Delivery is the differentiator** (2026-10-17). Whatever a buyer pays for
-is delivered as an environment. We email them a link, and they drop into a
-preconfigured Sprite or exe.dev box over Tailscale SSH or rex. Raw data is
+**Environments are one product** (2026-10-17). A buyer gets an emailed link
+and drops into a preconfigured Sprite or exe.dev box over Tailscale SSH or
+rex. Raw data is
 in `/data`. Harness sessions are where the harness keeps them (`~/.pi`,
 `~/.claude`, ...). Artifacts and everything else are files. Buyers can
 serve files over HTTP to grab them, or email them out: the agents on the
 box come with an email tool. It's fine if sellers use the platform only to
-set up environments and sell access somewhere else, like Patreon.
+set up environments and sell access somewhere else, like Patreon. We
+market these boxes like custom Halo maps. Artifact collections, sold as
+premium lab notebooks and textbooks, are another product.
+
+**Network effects are the moat.** Most of the sellers we want could easily
+build their own store for their data. What they can't build alone: a
+trustworthy rating system, good "you might also enjoy" recommendations, and
+rankings and leaderboards, which also make the Halo-map angle a game.
+
+**Buyers queue or bid for a limited amount of seller content.** That is the
+product we offer.
 
 ## Origin
 
@@ -267,8 +277,7 @@ does nothing.
 | Rex environment (see below) | Share or unshare the buyer's own environment on the tailnet | Yes |
 | YouTube unlisted, any other link | Send the link | Honor system |
 
-Since 2026-10-17 the environment is the lead channel: anything sold can be
-delivered as files on the buyer's box. Start with the hosted viewer plus
+Start with the hosted viewer plus
 honor-system links. Add enforced channels when sellers ask for them. Per-buyer watermarking makes leaks traceable on
 any channel.
 
@@ -397,6 +406,8 @@ What that implies for the design:
   GUI, the Mac app. Fine for engineers; worth measuring before building on it.
 
 ### Claude artifacts as textbooks
+
+Sold as premium lab notebooks and textbooks (2026-10-17).
 
 Idea from 2026-10-16. Claude artifacts (interactive pages made while working
 with Claude) are another byproduct worth selling, and could be a new kind of
@@ -622,7 +633,7 @@ media and GitHub, and nobody has shown they will pay for them.
 | Sellers can't legally sell their best work | The most valuable traces happen at work, on code the employer owns | Ask five target sellers how much of their AI use is on personal projects |
 | Redaction misses something | One leaked secret loses the seller for good | Run the redaction pipeline on my own traces for a month before selling anything |
 | Two products in one (the biggest risk) | A personal tracker and a data marketplace have different users | The product is the platform for selling subscriptions to data streams; the tracker and the event store only serve that. Judge it on sales |
-| Whop, Patreon and Gumroad already exist | They sell subscriptions, Discord access and digital goods today | Compete on capture and curation (content that makes itself), not on the paywall; keep the paywall thin |
+| Whop, Patreon and Gumroad already exist, and sellers could build their own store | They sell subscriptions, Discord access and digital goods today; our sellers can build a custom platform easily | Network effects: trustworthy ratings, "you might also enjoy", rankings. Plus capture and curation (content that makes itself); keep the paywall thin |
 | Pi Durable is experimental | Released Oct 1, 2026; its APIs may change | The event store is ours, so the agent can be replaced without losing data |
 | Rex ships late or changes shape | We're building ahead of rex's Linux server, which isn't out yet and has no auth beyond Tailscale | Keep rex at the edge (the way in), so recipes, Sprites and keys work without it; track its releases closely |
 | Recipes stop building | A snapshot sold today has to build months from now, but upstream downloads move or vanish | Pin tools in mise, have recipes fetch data only from our own store, and rebuild every published recipe on a schedule |
