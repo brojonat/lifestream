@@ -337,3 +337,39 @@ func TestCollectionsAndCorrections(t *testing.T) {
 		t.Errorf("inbox should offer open collections")
 	}
 }
+
+func TestRulesPage(t *testing.T) {
+	ctx := context.Background()
+	h, st, _ := newServer(t)
+	u, _, _ := st.AddUser(ctx, "me", "+1")
+	w := world{t, st, u.ID}
+	w.add(store.SourceAgent, store.TypeRuleAdded, "", time.Now(), store.RuleAdded{Text: "w means weight"})
+
+	if rec := do(t, h, "POST", "/rules", "text=never+sell+%3Cclient%3E+work"); rec.Code != 204 {
+		t.Fatalf("add: %d %s", rec.Code, rec.Body.String())
+	}
+	req := httptest.NewRequest("POST", "/rules", strings.NewReader(`{"text":"sleep is in hours"}`))
+	req.Header.Set("Content-Type", "application/json")
+	if rec := httptest.NewRecorder(); func() bool { h.ServeHTTP(rec, req); return rec.Code != 204 }() {
+		t.Fatalf("add as JSON payload failed")
+	}
+	if rec := do(t, h, "POST", "/rules", "text=+"); rec.Code != 400 {
+		t.Fatalf("empty rule: %d", rec.Code)
+	}
+	body := do(t, h, "GET", "/rules", "").Body.String()
+	for _, want := range []string{"w means weight", "learned", "never sell &lt;client&gt; work", "added"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("rules page missing %q", want)
+		}
+	}
+	rules, _ := st.Rules(ctx, u.ID)
+	if rec := do(t, h, "POST", "/rules/"+rules[0].ID+"/remove", ""); rec.Code != 204 {
+		t.Fatalf("remove: %d", rec.Code)
+	}
+	if rec := do(t, h, "POST", "/rules/nope/remove", ""); rec.Code != 422 {
+		t.Fatalf("remove unknown: %d", rec.Code)
+	}
+	if rules, _ := st.Rules(ctx, u.ID); len(rules) != 2 || rules[0].Source != SourceDashboard {
+		t.Fatalf("rules after remove: %+v", rules)
+	}
+}

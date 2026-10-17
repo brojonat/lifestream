@@ -20,6 +20,8 @@ const (
 	TypeLabelApplied      = "label.applied"
 	TypeLabelCorrected    = "label.corrected"
 	TypeMetricObserved    = "metric.observed"
+	TypeRuleAdded         = "rule.added"
+	TypeRuleRemoved       = "rule.removed"
 )
 
 // Collection kinds: a plain set of events, or a metric whose members also
@@ -59,6 +61,12 @@ type (
 		CollectionID string `json:"collection_id"`
 		Action       string `json:"action"` // "add" or "remove"
 		Note         string `json:"note,omitempty"`
+	}
+	RuleAdded struct {
+		Text string `json:"text"`
+	}
+	RuleRemoved struct {
+		RuleID string `json:"rule_id"`
 	}
 	MetricObserved struct {
 		CollectionID string     `json:"collection_id"`
@@ -244,6 +252,32 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 			return invalid("%s action must be add or remove, got %q", e.Type, p.Action)
 		}
 
+	case TypeRuleAdded:
+		var p RuleAdded
+		if err := decode(e, &p); err != nil {
+			return err
+		}
+		if strings.TrimSpace(p.Text) == "" {
+			return invalid("%s needs text", e.Type)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO rules (id, owner, text, source, created_at) VALUES (?, ?, ?, ?, ?)`,
+			e.ID, e.Owner, strings.TrimSpace(p.Text), e.Source, fmtTime(e.OccurredAt)); err != nil {
+			return fmt.Errorf("projecting %s: %w", e.Type, err)
+		}
+
+	case TypeRuleRemoved:
+		var p RuleRemoved
+		if err := decode(e, &p); err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, `DELETE FROM rules WHERE id = ? AND owner = ?`, p.RuleID, e.Owner)
+		if err != nil {
+			return fmt.Errorf("projecting %s: %w", e.Type, err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return invalid("no rule %q for this owner", p.RuleID)
+		}
+
 	case TypeMetricObserved:
 		var p MetricObserved
 		if err := decode(e, &p); err != nil {
@@ -355,7 +389,7 @@ func (s *Store) Rebuild(ctx context.Context) error {
 		return fmt.Errorf("rebuilding: %w", err)
 	}
 	defer tx.Rollback()
-	for _, t := range []string{"collections", "collection_rules", "collection_members", "metric_values"} {
+	for _, t := range []string{"collections", "collection_rules", "collection_members", "metric_values", "rules"} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+t); err != nil {
 			return fmt.Errorf("rebuilding: clearing %s: %w", t, err)
 		}
@@ -602,6 +636,36 @@ func (s *Store) MemberCounts(ctx context.Context, owner string) (map[string]int,
 			return nil, fmt.Errorf("counting members: %w", err)
 		}
 		out[id] = n
+	}
+	return out, rows.Err()
+}
+
+// OwnerRule is one entry in the owner's rules doc.
+type OwnerRule struct {
+	ID        string    `json:"id"`
+	Text      string    `json:"text"`
+	Source    string    `json:"source"` // who added it: agent or dashboard
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Rules returns the owner's rules doc, oldest entry first.
+func (s *Store) Rules(ctx context.Context, owner string) ([]OwnerRule, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, text, source, created_at FROM rules WHERE owner = ? ORDER BY created_at, id`, owner)
+	if err != nil {
+		return nil, fmt.Errorf("listing rules: %w", err)
+	}
+	defer rows.Close()
+	out := []OwnerRule{}
+	for rows.Next() {
+		var r OwnerRule
+		var at string
+		if err := rows.Scan(&r.ID, &r.Text, &r.Source, &at); err != nil {
+			return nil, fmt.Errorf("listing rules: %w", err)
+		}
+		if r.CreatedAt, err = parseTime(at); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }

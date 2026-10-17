@@ -22,7 +22,7 @@ type DocReader = {
 	snapshot<T extends Record<string, unknown>>(token: typeof OwnerDoc, conversationId: ConversationId, ctx: Context): Promise<Readonly<T> | undefined>;
 };
 
-async function ownerOf(reader: unknown, conversationId: ConversationId, ctx: Context): Promise<string> {
+export async function ownerOf(reader: unknown, conversationId: ConversationId, ctx: Context): Promise<string> {
 	const doc = await (reader as DocReader).snapshot<{ owner: string }>(OwnerDoc, conversationId, ctx);
 	if (!doc?.owner) throw new Error(`conversation ${conversationId} has no owner`);
 	return doc.owner;
@@ -39,7 +39,7 @@ Each user message is one event from the owner's event store: an SMS, a note, a c
 3. For a metric collection, also call log_value with the number the event reports (e.g. "weight 175" -> 175). Use the collection's unit unless the event names another.
 4. If you can't tell what the owner meant (an implausible number, an ambiguous command), call flag_for_review with a short question instead of guessing. The answer comes back later as a new event.
 5. A label.corrected event from the dashboard means the owner fixed a label you made (or missed). Learn the boundary from it; if it shows a rule is missing, amend the collection so future events are filed correctly.
-6. If the owner teaches you something ("w means weight"), make it durable: amend the relevant collection's include rule. Don't rely on remembering it.
+6. If the owner teaches you something ("w means weight", "never sell anything from ~/work"), make it durable with add_rule. Background work and future conversations only see what is written down. Follow every entry in <owner_rules>.
 
 Large payloads arrive as a pointer; call read_event to see the content when the title isn't enough.
 
@@ -52,8 +52,8 @@ export function collectionsSection(c: Collection): string {
 	return lines.join("\n");
 }
 
-const text = (s: string) => ({ output: [{ type: "text" as const, text: s }] });
-const fail = (s: string) => ({ ...text(s), isError: true });
+export const text = (s: string) => ({ output: [{ type: "text" as const, text: s }] });
+export const fail = (s: string) => ({ ...text(s), isError: true });
 
 /** Builds the extension. `api` is the Go client; nothing else is shared. */
 export function collectionsExtension(api: GoApi) {

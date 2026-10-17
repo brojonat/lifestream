@@ -23,6 +23,7 @@ const OWNER = "01OWNER";
 class FakeGo {
 	appends: { body: { owner: string; type: string; parent_id?: string; payload: any }; key: string | undefined }[] = [];
 	collections: Collection[] = [];
+	rules: { id: string; text: string; source: string }[] = [];
 	server!: Server;
 	url = "";
 
@@ -37,6 +38,9 @@ class FakeGo {
 				assert.equal(url.searchParams.get("owner"), OWNER);
 				return json(200, { collections: this.collections });
 			}
+			if (req.method === "GET" && url.pathname === "/api/rules") {
+				return json(200, { rules: this.rules });
+			}
 			if (req.method === "POST" && url.pathname === "/api/events") {
 				const body = JSON.parse(await read(req));
 				if (body.type === "label.applied" && body.payload.definition_version > 1) {
@@ -44,6 +48,7 @@ class FakeGo {
 				}
 				this.appends.push({ body, key: req.headers["idempotency-key"] as string | undefined });
 				const id = `01DERIVED${this.appends.length}`;
+				if (body.type === "rule.added") this.rules.push({ id, text: body.payload.text, source: "agent" });
 				if (body.type === "collection.started") {
 					this.collections.push({ id, name: body.payload.name, kind: body.payload.kind, unit: body.payload.unit, status: "open", version: 1, rules: [{ kind: "include", text: body.payload.include, version: 1 }] });
 				}
@@ -152,6 +157,24 @@ test("a rejected write goes back to the model as a tool error", async () => {
 	await agent.close(ctx);
 	assert.equal(go.appends.length, appended, "nothing stored");
 	assert.match(toolResult, /^toolResult true .*rejected: .*422 definition_version 9/);
+});
+
+test("what the owner teaches becomes a rule the next request sees", async () => {
+	let prompt = "";
+	const agent = await open([
+		fauxAssistantMessage([fauxToolCall("add_rule", { event_id: "E4", text: "w means weight" })], { stopReason: "toolUse" }),
+		(context) => {
+			prompt = JSON.stringify(context);
+			return fauxAssistantMessage([fauxText("noted")]);
+		},
+	]);
+	const sub = await agent.submit(OWNER, sms("E4", "fyi w means weight"), ctx);
+	assert.equal((await sub.wait(ctx)).status, "done");
+	await agent.close(ctx);
+	const added = go.appends.at(-1)!;
+	assert.equal(added.body.type, "rule.added");
+	assert.equal(added.body.parent_id, "E4");
+	assert.match(prompt, /<owner_rules>\\n- w means weight\\n<\/owner_rules>/);
 });
 
 test("large payloads become pointers", () => {

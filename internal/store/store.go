@@ -102,6 +102,16 @@ var migrations = []string{
 		observed_at     TEXT NOT NULL
 	);
 	CREATE INDEX metric_values_collection ON metric_values(collection_id, observed_at);`,
+
+	// The rules doc: the owner's standing instructions, one row per entry.
+	`CREATE TABLE rules (
+		id         TEXT PRIMARY KEY, -- the rule.added event id
+		owner      TEXT NOT NULL,
+		text       TEXT NOT NULL,
+		source     TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	);
+	CREATE INDEX rules_owner ON rules(owner, created_at);`,
 }
 
 // Store is the open database. Writes are serialized by mu so the hash chain

@@ -2,7 +2,6 @@ package web
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"time"
 
@@ -145,24 +144,7 @@ func (s *Server) correct(w http.ResponseWriter, r *http.Request, collectionID, a
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
-	ctx := r.Context()
-	u, err := s.owner(ctx)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	payload, _ := json.Marshal(store.LabelCorrected{
+	s.appendOwned(w, r, store.TypeLabelCorrected, store.LabelCorrected{
 		EventID: r.FormValue("event_id"), CollectionID: collectionID, Action: action,
 	})
-	_, _, err = s.Events.Append(ctx, store.Event{Owner: u.ID, Source: SourceDashboard, Type: store.TypeLabelCorrected, Payload: payload})
-	var inv *store.InvalidEventError
-	if errors.As(err, &inv) {
-		http.Error(w, inv.Msg, http.StatusUnprocessableEntity)
-		return
-	}
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
 }

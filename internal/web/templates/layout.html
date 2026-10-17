@@ -68,6 +68,13 @@
   button.quiet, details.add summary { font-size: .85rem; padding: .1rem .55rem; border-radius: 6px; cursor: pointer; color: inherit;
     background: transparent; border: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
   details.add { display: inline-block; margin: 0; }
+  form.newrule { display: flex; gap: .5rem; align-items: flex-start; margin: .75rem 0 1.25rem; }
+  form.newrule textarea { flex: 1; min-height: 2.6rem; padding: .45rem .6rem; border-radius: 6px; resize: vertical;
+    background: transparent; color: inherit; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
+  ul.rules { list-style: none; padding: 0; margin: 0; }
+  ul.rules li { display: flex; gap: .75rem; align-items: baseline; padding: .5rem 0;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
+  ul.rules li .text { flex: 1; }
   details.add summary { display: inline-block; list-style: none; }
   details.add form { display: flex; gap: .4rem; margin-top: .35rem; }
   details.add select { padding: .15rem .3rem; border-radius: 6px; background: transparent; color: inherit;
@@ -112,6 +119,7 @@
     <a href="/" {{if eq .Nav "metrics"}}aria-current="page"{{end}}>metrics</a>
     <a href="/inbox" {{if eq .Nav "inbox"}}aria-current="page"{{end}}>inbox</a>
     <a href="/collections" {{if eq .Nav "collections"}}aria-current="page"{{end}}>collections</a>
+    <a href="/rules" {{if eq .Nav "rules"}}aria-current="page"{{end}}>rules</a>
     <a href="/admin" {{if eq .Nav "admin"}}aria-current="page"{{end}}>diagnostics</a>
   </nav>
 </header>

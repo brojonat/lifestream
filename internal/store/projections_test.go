@@ -80,6 +80,11 @@ func weightStory(t *testing.T) (fx, map[string]string) {
 	f.must(TypeCollectionStopped, "", CollectionRef{CollectionID: notes.ID})
 	f.must(TypeCollectionResumed, "", CollectionRef{CollectionID: notes.ID})
 	f.must(TypeLabelCorrected, "", LabelCorrected{EventID: cmd.ID, CollectionID: notes.ID, Action: "add"})
+
+	f.must(TypeRuleAdded, cmd.ID, RuleAdded{Text: "w means weight"})
+	gone := f.must(TypeRuleAdded, "", RuleAdded{Text: "temporary"})
+	f.must(TypeRuleRemoved, "", RuleRemoved{RuleID: gone.ID})
+	f.must(TypeRuleAdded, "", RuleAdded{Text: "never sell anything tagged client"})
 	return f, ids
 }
 
@@ -159,6 +164,7 @@ func dump(t *testing.T, s *Store) map[string][]map[string]any {
 		"collection_rules":   "collection_id, event_id",
 		"collection_members": "collection_id, event_id",
 		"metric_values":      "event_id",
+		"rules":              "id",
 	} {
 		rows, err := s.db.Query("SELECT * FROM " + table + " ORDER BY " + order)
 		if err != nil {
@@ -240,4 +246,17 @@ func TestCollectionHistoryAndMembers(t *testing.T) {
 	if counts[ids["weight"]] != 2 || counts[ids["notes"]] != 1 {
 		t.Fatalf("counts: %v", counts)
 	}
+}
+
+func TestRulesDoc(t *testing.T) {
+	ctx := context.Background()
+	f, _ := weightStory(t)
+	rules, err := f.s.Rules(ctx, f.owner)
+	if err != nil || len(rules) != 2 || rules[0].Text != "w means weight" || rules[0].Source != SourceAgent {
+		t.Fatalf("rules: %v %+v", err, rules)
+	}
+	f.mustReject(TypeRuleAdded, RuleAdded{Text: "  "})
+	f.mustReject(TypeRuleRemoved, RuleRemoved{RuleID: "nope"})
+	other := fx{t: t, s: f.s, owner: addUser(t, f.s, "+9").ID}
+	other.mustReject(TypeRuleRemoved, RuleRemoved{RuleID: rules[0].ID})
 }

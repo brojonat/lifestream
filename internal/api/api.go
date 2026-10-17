@@ -22,6 +22,7 @@ var DerivedTypes = map[string]bool{
 	store.TypeCollectionResumed: true,
 	store.TypeLabelApplied:      true,
 	store.TypeMetricObserved:    true,
+	store.TypeRuleAdded:         true, // removing one is the owner's call, on the dashboard
 	"review.flagged":            true,
 	"redaction.created":         true,
 }
@@ -38,6 +39,7 @@ func NewHandler(st *store.Store, log *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	mux.HandleFunc("GET /api/collections", h.collections)
 	mux.HandleFunc("GET /api/collections/{id}/members", h.members)
+	mux.HandleFunc("GET /api/rules", h.rules)
 	mux.HandleFunc("GET /api/events", h.listEvents)
 	mux.HandleFunc("GET /api/events/{id}", h.event)
 	mux.HandleFunc("POST /api/events", h.appendEvent)
@@ -65,6 +67,21 @@ func (h *handler) collections(w http.ResponseWriter, r *http.Request) {
 		cs = []store.Collection{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"collections": cs})
+}
+
+// GET /api/rules?owner=
+func (h *handler) rules(w http.ResponseWriter, r *http.Request) {
+	owner := r.URL.Query().Get("owner")
+	if owner == "" {
+		writeError(w, http.StatusBadRequest, "owner is required")
+		return
+	}
+	rules, err := h.st.Rules(r.Context(), owner)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rules": rules})
 }
 
 // GET /api/collections/{id}/members

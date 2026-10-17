@@ -8,6 +8,7 @@ import { type Conversation, type ConversationId, configure, createRegistry, defi
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { collectionsExtension, OwnerDoc } from "./collections.ts";
 import type { GoApi, StoredEvent } from "./goapi.ts";
+import { rulesExtension } from "./rules.ts";
 
 /** owner -> conversation id; conversations have no keys of their own. */
 const Owners = defineDoc<{ byOwner: Record<string, number> }>({
@@ -43,6 +44,7 @@ export class Agent {
 	static async open(opts: AgentOptions, ctx: Context): Promise<Agent> {
 		const registry = createRegistry();
 		registry.install(collectionsExtension(opts.api));
+		registry.install(rulesExtension(opts.api));
 		const harness = await Harness.open(
 			await openNodeSqliteStorage(opts.storagePath),
 			{ models: opts.models, registry, onReport: opts.onReport },

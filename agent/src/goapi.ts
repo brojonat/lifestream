@@ -15,6 +15,8 @@ export type Collection = {
 	rules: Rule[];
 };
 
+export type OwnerRule = { id: string; text: string; source: string };
+
 export type StoredEvent = {
 	id: string;
 	owner: string;
@@ -48,6 +50,11 @@ export class GoApi {
 		if (status) q.set("status", status);
 		const body = (await this.#request("GET", `/api/collections?${q}`)) as { collections: Collection[] };
 		return body.collections;
+	}
+
+	async rules(owner: string): Promise<OwnerRule[]> {
+		const body = (await this.#request("GET", `/api/rules?${new URLSearchParams({ owner })}`)) as { rules: OwnerRule[] };
+		return body.rules;
 	}
 
 	/** One event; with offset/limit, a byte range of its payload as `data`. */

@@ -1,0 +1,15 @@
+{{define "region"}}<main id="rules">
+<div class="row"><h2>Rules</h2><span class="muted">standing instructions the agent reads before every event</span></div>
+<!-- payload is read synchronously, so the reset can't empty it first (LEARNINGS.md) -->
+<form class="newrule" data-on:submit="@post('/rules', {payload: {text: el.elements.text.value}}); el.reset()">
+  <textarea name="text" required aria-label="new rule" data-ignore-morph placeholder="e.g. w means weight · never sell anything recorded in ~/work"></textarea>
+  <button class="quiet" type="submit">Add</button>
+</form>
+{{if not .Rules}}<p class="empty">No rules yet. The agent adds one when you teach it something in a text.</p>
+{{else}}<ul class="rules">
+{{range .Rules}}<li><span class="text">{{.Text}}</span>
+  <span class="muted">{{if eq .Source "agent"}}learned{{else}}added{{end}} {{.CreatedAt | ago}}</span>
+  <form data-on:submit="@post('/rules/{{.ID}}/remove')"><button class="quiet" type="submit">remove</button></form></li>
+{{end}}</ul>{{end}}
+</main>
+{{end}}

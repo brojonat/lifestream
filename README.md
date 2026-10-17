@@ -71,6 +71,7 @@ Public listener (`--addr`, what the ingress exposes):
 | `GET /inbox` | The last 50 raw events and what each became (labels, values, flags); flagged ones highlighted |
 | `GET /collections`, `GET /c/{id}` | Collections; one collection's definition history (each version) and members |
 | `POST /c/{id}/remove`, `POST /inbox/add` | Owner corrections: append `label.corrected` (source `dashboard`), which goes to the agent like any raw event |
+| `GET /rules`, `POST /rules`, `POST /rules/{id}/remove` | The rules doc: the owner's standing instructions (`rule.added` / `rule.removed`), which the agent reads before every event |
 | `GET /admin` | Process diagnostics |
 | `GET /healthz` | `ok` |
 | `GET /metrics` | Prometheus text format |
@@ -86,13 +87,14 @@ side of the contract):
 | --- | --- |
 | `GET /api/collections?owner=&status=` | Current collection definitions with their rules |
 | `GET /api/collections/{id}/members` | Members, each with the definition version it was labeled under |
+| `GET /api/rules?owner=` | The rules doc |
 | `GET /api/events?owner=&since=&after=&limit=&max_payload=` | Events in log order; payloads over `max_payload` bytes (default 4096) are elided, with `payload_size` |
 | `GET /api/events/{id}` | One event; `?offset=&limit=` returns a byte range of a large payload as `data` |
 | `POST /api/events` | Append a derived event `{owner, type, parent_id?, payload}`. `Idempotency-Key` header = the Pi Durable tool *task* id (`api.taskId`; provider tool-call ids aren't unique). 201 new, 200 replay, 422 when it contradicts current state (unknown collection, closed collection, bad version). |
 | `GET /healthz` | `ok` |
 
 The agent may append `collection.started|amended|stopped|resumed`,
-`label.applied`, `metric.observed`, `review.flagged` and
+`label.applied`, `metric.observed`, `rule.added`, `review.flagged` and
 `redaction.created`. Payload shapes are the structs in
 `internal/store/projections.go`; a collection's id is the id of its
 `collection.started` event.
@@ -129,9 +131,11 @@ Node ≥ 22.19 (mise pins 25), no build step: `node src/main.ts`. Pi Durable
 
 One conversation per owner. Each event is submitted with its id as
 `requestId` (dedup survives restarts); SMS and dashboard events use
-`whenBusy: "steer"`. The `collections` extension's tools write derived
-events through Go's API; its `collections` section lists the open
-definitions before every model request. Tests use pi-ai's faux provider;
+`whenBusy: "steer"`. Two extensions: `collections` (eight tools that write
+derived events through Go's API; sections `role` and `collections`, the
+open definitions) and `rules` (`add_rule`; section `owner_rules`, the rules
+doc). Sections are fetched before every model request and rendered
+deterministically, so the prompt cache only breaks when they change. Tests use pi-ai's faux provider;
 `test/e2e.test.ts` drives the real Go binary.
 
 ## Deploy

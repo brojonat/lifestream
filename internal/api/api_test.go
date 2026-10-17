@@ -167,3 +167,15 @@ func TestReadLargeEvent(t *testing.T) {
 }
 
 func itoa(n int64) string { b, _ := json.Marshal(n); return string(b) }
+
+func TestRules(t *testing.T) {
+	e := setup(t)
+	if code, out := e.do("POST", "/api/events", body(map[string]any{"owner": e.owner, "type": "rule.added", "payload": map[string]any{"text": "w means weight"}})); code != 201 {
+		t.Fatalf("add rule: %d %v", code, out)
+	}
+	code, out := e.do("GET", "/api/rules?owner="+e.owner, "")
+	rules := out["rules"].([]any)
+	if code != 200 || len(rules) != 1 || rules[0].(map[string]any)["text"] != "w means weight" {
+		t.Fatalf("rules: %d %v", code, out)
+	}
+}
