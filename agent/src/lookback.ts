@@ -10,10 +10,9 @@ import type { Context } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai/models";
 import { defineTask, type TaskRuntime } from "@earendil-works/pi-durable";
 import { ApiError, type Collection, type GoApi, type StoredEvent } from "./goapi.ts";
-import type { redactionTask } from "./redaction.ts";
+import { type RedactTask, startRedaction } from "./redaction.ts";
 import { type Retry, retrying, retryPhase } from "./retry.ts";
 
-type RedactTask = ReturnType<typeof redactionTask>;
 
 export const DEFAULT_LOOKBACK_DAYS = 7;
 const BATCH = 20;
@@ -94,7 +93,8 @@ export function lookBackTask(api: GoApi, redact: RedactTask, { judge, retryBaseM
 		let batch: StoredEvent[];
 		let next: number;
 		if (mode === "include") {
-			const page = await api.events(owner, { since, after: st.after, limit: BATCH, maxPayload: 2000 });
+			// Only session heads: labeling one pulls in the rest of its session.
+			const page = await api.events(owner, { since, after: st.after, limit: BATCH, maxPayload: 2000, dispatched: true });
 			if (page.length === 0) return done(c.name);
 			next = page.at(-1)!.seq ?? st.after + page.length;
 			batch = page.filter((e) => e.source !== "agent" && !SKIP_TYPES.test(e.type) && e.id !== triggerEventId && !memberIds.has(e.id));
@@ -146,9 +146,7 @@ export function lookBackTask(api: GoApi, redact: RedactTask, { judge, retryBaseM
 		if (mode === "exclude") next -= changed;
 		// The checkpoint and the redaction tasks for this batch commit together.
 		await runtime.commit(async (tx) => {
-			for (const eventId of labeled) {
-				await tx.createTask(redact, { owner, eventId }, { ownership: { kind: "conversation" }, background: true });
-			}
+			await startRedaction(tx, runtime.conversationId, redact, owner, labeled);
 			return { status: "running", checkpoint: { phase: "scan", after: next, checked: st.checked + batch.length, changed: st.changed + changed } };
 		}, ctx);
 	}

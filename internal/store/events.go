@@ -70,6 +70,19 @@ func (s *Store) Append(ctx context.Context, e Event) (stored Event, created bool
 	}
 	e.OccurredAt, e.ReceivedAt = e.OccurredAt.UTC(), e.ReceivedAt.UTC()
 
+	var session SessionRef
+	if e.Type == TypeLLMMessage {
+		ref, err := ParseSessionRef(e.Payload)
+		if err != nil {
+			return Event{}, false, err
+		}
+		key := sessionKey(ref)
+		if e.IdempotencyKey != "" && e.IdempotencyKey != key {
+			return Event{}, false, invalid("%s idempotency key is (session_id, sequence); drop idempotency_key", e.Type)
+		}
+		e.IdempotencyKey, session = key, ref
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e.ID == "" {
@@ -110,11 +123,21 @@ func (s *Store) Append(ctx context.Context, e Event) (stored Event, created bool
 	}
 	e.Hash = chainHash(e.PrevHash, e)
 
+	// Raw events go to the agent; of a session, only the first few.
+	dispatch := e.Source != SourceAgent
+	if dispatch && session.SessionID != "" {
+		rank, err := sessionRank(ctx, tx, e.Owner, session.SessionID)
+		if err != nil {
+			return Event{}, false, err
+		}
+		dispatch = rank < SessionHead
+	}
+
 	res, err := tx.ExecContext(ctx, `INSERT INTO events
 		(id, owner, source, type, occurred_at, received_at, parent_id, idempotency_key, payload, dispatch, prev_hash, hash)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.ID, e.Owner, e.Source, e.Type, fmtTime(e.OccurredAt), fmtTime(e.ReceivedAt),
-		nullable(e.ParentID), nullable(e.IdempotencyKey), string(e.Payload), e.Source != SourceAgent,
+		nullable(e.ParentID), nullable(e.IdempotencyKey), string(e.Payload), dispatch,
 		e.PrevHash, e.Hash)
 	if err != nil {
 		return Event{}, false, fmt.Errorf("inserting event: %w", err)
@@ -145,9 +168,14 @@ func (s *Store) Events(ctx context.Context, owner string, afterSeq int64, limit 
 
 // EventsSince returns an owner's events that occurred at or after since,
 // in log order after seq, at most limit. Look-back scans page through it.
-func (s *Store) EventsSince(ctx context.Context, owner string, since time.Time, afterSeq int64, limit int) ([]Event, error) {
-	return s.queryEvents(ctx, selectEvent+` WHERE owner = ? AND occurred_at >= ? AND seq > ? ORDER BY seq LIMIT ?`,
-		owner, fmtTime(since), afterSeq, limit)
+// dispatchedOnly keeps only events the dispatcher sends the agent: raw
+// events, minus the tail of each session.
+func (s *Store) EventsSince(ctx context.Context, owner string, since time.Time, afterSeq int64, limit int, dispatchedOnly bool) ([]Event, error) {
+	q := selectEvent + ` WHERE owner = ? AND occurred_at >= ? AND seq > ?`
+	if dispatchedOnly {
+		q += ` AND dispatch = 1`
+	}
+	return s.queryEvents(ctx, q+` ORDER BY seq LIMIT ?`, owner, fmtTime(since), afterSeq, limit)
 }
 
 // Children returns the events derived from id, oldest first.

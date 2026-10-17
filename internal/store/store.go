@@ -112,6 +112,15 @@ var migrations = []string{
 		created_at TEXT NOT NULL
 	);
 	CREATE INDEX rules_owner ON rules(owner, created_at);`,
+
+	// Sessions: which llm.message events share a session_id.
+	`CREATE TABLE session_events (
+		event_id   TEXT PRIMARY KEY,
+		owner      TEXT NOT NULL,
+		session_id TEXT NOT NULL,
+		sequence   INTEGER NOT NULL
+	);
+	CREATE INDEX session_events_session ON session_events(owner, session_id);`,
 }
 
 // Store is the open database. Writes are serialized by mu so the hash chain

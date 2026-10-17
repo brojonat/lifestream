@@ -62,6 +62,11 @@ class FakeGo {
 				const e = this.events.find((x) => x.id === one[1]) ?? this.submitted.get(one[1]) ?? { ...sms(one[1], ""), seq: 0 };
 				return json(200, url.searchParams.has("offset") ? { ...e, payload: null, data: JSON.stringify(e.payload) } : e);
 			}
+			if (req.method === "GET" && url.pathname === "/api/unredacted") {
+				const redacted = new Set(this.appends.filter((a) => a.body.type === "redaction.created").map((a) => a.body.parent_id));
+				const all = new Set([...this.members.values()].flatMap((m) => [...m]));
+				return json(200, { events: [...all].filter((id) => !redacted.has(id)) });
+			}
 			if (req.method === "GET" && url.pathname === "/api/rules") {
 				return json(200, { rules: this.rules });
 			}
@@ -253,7 +258,8 @@ test("starting a collection labels the last 7 days in the background; an exclude
 		for (let i = 0; i < 200 && !f(); i++) await new Promise((r) => setTimeout(r, 10));
 		assert.ok(f(), `timed out; appends=${go.appends.map((a) => a.body.type)} judged=${JSON.stringify(judged)}`);
 	};
-	await until(() => go.appends.filter((a) => a.body.type === "label.applied").length === 2);
+	// The look-back is a background task: wait for its writes, not for the conversation.
+	await until(() => go.appends.filter((a) => a.body.type === "label.applied").length === 2 && go.appends.filter((a) => a.body.type === "metric.observed").length === 2);
 	await conv.waitForIdle(ctx);
 	assert.deepEqual(judged[0], ["include", "L1", "L2", "L4"]);
 	const labels = go.appends.filter((a) => a.body.type === "label.applied");
@@ -308,7 +314,8 @@ test("every labeled event gets one redacted copy: scanner, then model review", a
 	await new Promise((r) => setTimeout(r, 200)); // give a duplicate redaction time to (not) appear
 	await agent.close(ctx);
 
-	const copies = go.appends.filter((a) => a.body.type === "redaction.created");
+	// Only R1's: a previous test's background tasks may still land here.
+	const copies = go.appends.filter((a) => a.body.type === "redaction.created" && a.body.parent_id === "R1");
 	assert.equal(copies.length, 1, "one redacted copy per event");
 	const red = copies[0].body;
 	assert.equal(red.parent_id, "R1");
@@ -317,6 +324,23 @@ test("every labeled event gets one redacted copy: scanner, then model review", a
 	assert.deepEqual(red.payload.findings.map((f: { kind: string }) => f.kind).sort(), ["aws_access_key", "email", "model:client"]);
 	assert.equal(reviewed.length, 1);
 	assert.ok(!reviewed[0].includes("AKIA"), "the model never sees what the scanner caught");
+});
+
+test("the sweep redacts members that joined through their session, once each", async () => {
+	go.appends = [];
+	go.members.set("01SESSIONS", new Set(["S0", "S1"])); // Go added these; the agent never saw them
+	const agent = await open([fauxAssistantMessage([fauxText("noted")])]);
+	await (await agent.submit(OWNER, sms("SW1", "hi"), ctx)).wait(ctx); // the owner's conversation exists now
+	const copies = (id: string) => go.appends.filter((a) => a.body.type === "redaction.created" && a.body.parent_id === id).length;
+	assert.ok((await agent.sweep(ctx)) >= 2);
+	await agent.sweep(ctx); // before the tasks finish: the ledger stops a second start
+	for (let i = 0; i < 200 && !(copies("S0") && copies("S1")); i++) await new Promise((r) => setTimeout(r, 10));
+	assert.equal(await agent.sweep(ctx), 0, "nothing left to redact");
+	await new Promise((r) => setTimeout(r, 200));
+	await agent.close(ctx);
+	assert.equal(copies("S0"), 1);
+	assert.equal(copies("S1"), 1);
+	assert.equal(go.appends.filter((a) => a.body.type === "redaction.created").length, new Set(go.appends.map((a) => a.body.parent_id)).size, "one copy per event");
 });
 
 test("review prompt and span parsing", () => {

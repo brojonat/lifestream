@@ -3,6 +3,7 @@
 //   LIFESTREAM_API_URL    Go's internal API (default http://127.0.0.1:8081)
 //   DATA_DIR              where agent.db lives (default ~/.lifestream)
 //   AGENT_MODEL           provider/modelId (default anthropic/claude-haiku-4-5-20251001)
+//   SWEEP_SECONDS         how often to redact members that skipped the agent (default 30)
 //   ANTHROPIC_API_KEY     read by the Anthropic provider
 //   LOG_LEVEL, LOG_FORMAT
 
@@ -42,6 +43,22 @@ const [host, port] = (env.AGENT_ADDR ?? "127.0.0.1:8082").split(":");
 const server = createServer(handler(agent, log, ctx));
 server.listen(Number(port), host, () => log.info("listening", { addr: `${host}:${port}`, model: `${model.provider}/${model.modelId}`, data_dir: dataDir }));
 
+// Session messages join collections in Go without reaching the agent; the
+// sweep gives them their redacted copy.
+let sweeping = false;
+const sweeper = setInterval(async () => {
+	if (sweeping) return;
+	sweeping = true;
+	try {
+		const pending = await agent.sweep(ctx);
+		if (pending > 0) log.debug("redaction sweep", { pending });
+	} catch (err) {
+		log.warn("redaction sweep failed", { error: String(err) });
+	} finally {
+		sweeping = false;
+	}
+}, Number(env.SWEEP_SECONDS ?? 30) * 1000);
+
 // A failed harness can't recover in place; exit so the pod restarts us.
 agent.closed.then((end) => {
 	if (end.reason === "failed") {
@@ -53,6 +70,7 @@ agent.closed.then((end) => {
 const shutdown = async (signal: string) => {
 	log.info("shutting down", { signal });
 	server.close();
+	clearInterval(sweeper);
 	await agent.close(ctx);
 	process.exit(0);
 };

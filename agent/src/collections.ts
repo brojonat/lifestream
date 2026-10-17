@@ -8,7 +8,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { type ConversationId, defineDoc, defineExtension, defineTool, section, type ToolExecutionApi } from "@earendil-works/pi-durable";
 import { ApiError, type Collection, type GoApi } from "./goapi.ts";
 import { DEFAULT_LOOKBACK_DAYS, type LookBackOptions, lookBackTask } from "./lookback.ts";
-import type { redactionTask } from "./redaction.ts";
+import { type RedactTask, startRedaction } from "./redaction.ts";
 
 /** Which owner a conversation belongs to. Written when the conversation is created. */
 export const OwnerDoc = defineDoc<{ owner: string }>({
@@ -66,7 +66,7 @@ export const fail = (s: string) => ({ ...text(s), isError: true });
  * task (from the redaction extension), started for every label;
  * `lookBack` tunes the look-back task (tests).
  */
-export function collectionsExtension(api: GoApi, redact: ReturnType<typeof redactionTask>, opts: { lookBack?: LookBackOptions } = {}) {
+export function collectionsExtension(api: GoApi, redact: RedactTask, opts: { lookBack?: LookBackOptions } = {}) {
 	const LookBack = lookBackTask(api, redact, opts.lookBack);
 	// Every write: owner from the conversation, idempotency key from the tool
 	// task (stable when a replay-safe tool reruns after a crash).
@@ -150,7 +150,7 @@ export function collectionsExtension(api: GoApi, redact: ReturnType<typeof redac
 		execute: (a, tapi, ctx) =>
 			write(tapi, ctx, "label.applied", {
 				event_id: a.event_id, collection_id: a.collection_id, definition_version: a.definition_version, reason: a.reason,
-			}, a.event_id, (owner) => tapi.createTask(redact, { owner, eventId: a.event_id }, { ownership: { kind: "conversation" }, background: true }, ctx)),
+			}, a.event_id, (owner) => tapi.commit((tx) => startRedaction(tx, tapi.conversationId, redact, owner, [a.event_id]), ctx)),
 	});
 
 	const logValue = defineTool({

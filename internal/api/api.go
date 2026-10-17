@@ -45,6 +45,7 @@ func NewHandler(st *store.Store, log *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /api/events/{id}", h.event)
 	mux.HandleFunc("GET /api/events/{id}/children", h.children)
 	mux.HandleFunc("POST /api/events", h.appendEvent)
+	mux.HandleFunc("GET /api/unredacted", h.unredacted)
 	return mux
 }
 
@@ -114,7 +115,7 @@ func summarize(e store.Event, maxPayload int) Summary {
 	return s
 }
 
-// GET /api/events?owner=&since=RFC3339&after=SEQ&limit=N&max_payload=BYTES
+// GET /api/events?owner=&since=RFC3339&after=SEQ&limit=N&max_payload=BYTES&dispatched=1
 func (h *handler) listEvents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	owner := q.Get("owner")
@@ -138,7 +139,7 @@ func (h *handler) listEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "after, limit (1-1000) and max_payload must be integers")
 		return
 	}
-	evs, err := h.st.EventsSince(r.Context(), owner, since, int64(after), limit)
+	evs, err := h.st.EventsSince(r.Context(), owner, since, int64(after), limit, q.Get("dispatched") == "1")
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -148,6 +149,27 @@ func (h *handler) listEvents(w http.ResponseWriter, r *http.Request) {
 		out = append(out, summarize(e, maxPayload))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": out})
+}
+
+// GET /api/unredacted?owner=&limit=: ids of collection members with no
+// redaction.created yet, oldest first.
+func (h *handler) unredacted(w http.ResponseWriter, r *http.Request) {
+	owner := r.URL.Query().Get("owner")
+	if owner == "" {
+		writeError(w, http.StatusBadRequest, "owner is required")
+		return
+	}
+	limit, err := intParam(r.URL.Query().Get("limit"), 100)
+	if err != nil || limit < 1 || limit > 1000 {
+		writeError(w, http.StatusBadRequest, "limit must be an integer, 1-1000")
+		return
+	}
+	ids, err := h.st.Unredacted(r.Context(), owner, limit)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": ids})
 }
 
 // Slice is a byte range of a large payload. Data is the raw text of that

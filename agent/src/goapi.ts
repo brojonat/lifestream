@@ -59,13 +59,21 @@ export class GoApi {
 	}
 
 	/** Events that occurred at or after `since`, in log order after seq `after`. Big payloads come back null. */
-	async events(owner: string, opts: { since?: string; after?: number; limit?: number; maxPayload?: number }): Promise<(StoredEvent & { payload_size: number })[]> {
+	/** `dispatched` keeps only what the dispatcher sends the agent: raw events, minus each session's tail. */
+	async events(owner: string, opts: { since?: string; after?: number; limit?: number; maxPayload?: number; dispatched?: boolean }): Promise<(StoredEvent & { payload_size: number })[]> {
 		const q = new URLSearchParams({ owner });
 		if (opts.since) q.set("since", opts.since);
 		if (opts.after) q.set("after", String(opts.after));
 		if (opts.limit) q.set("limit", String(opts.limit));
 		if (opts.maxPayload) q.set("max_payload", String(opts.maxPayload));
+		if (opts.dispatched) q.set("dispatched", "1");
 		const body = (await this.#request("GET", `/api/events?${q}`)) as { events: (StoredEvent & { payload_size: number })[] };
+		return body.events;
+	}
+
+	/** Ids of collection members with no redaction.created yet, oldest first. */
+	async unredacted(owner: string, limit = 100): Promise<string[]> {
+		const body = (await this.#request("GET", `/api/unredacted?${new URLSearchParams({ owner, limit: String(limit) })}`)) as { events: string[] };
 		return body.events;
 	}
 

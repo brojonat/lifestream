@@ -5,10 +5,15 @@
 // large trace is reviewed in pieces. Runs as a background task that
 // checkpoints after each chunk and retries failures. One copy per event:
 // later labels of an already-redacted event do nothing.
+//
+// Every task starts through startRedaction, which records the event in the
+// conversation's ledger in the same commit, so the label tools, the
+// look-back and the sweep (for session messages that joined a collection
+// without passing through the agent) never start two tasks for one event.
 
 import type { Context } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai/models";
-import { defineTask, type TaskRuntime } from "@earendil-works/pi-durable";
+import { type ConversationId, defineDoc, defineTask, type TaskRuntime, type Tx } from "@earendil-works/pi-durable";
 import type { GoApi } from "./goapi.ts";
 import { type Retry, retrying, retryPhase } from "./retry.ts";
 import { type Finding, redactStrings, scanJSON } from "./scanner.ts";
@@ -24,6 +29,41 @@ type Review = { phase: "review"; chunk: number; spans: Span[]; attempt?: number 
 type Start = { phase: "start"; attempt?: number };
 type Write = { phase: "write"; spans: Span[]; chunks: number; attempt?: number };
 type State = Start | Review | Write | Retry<Start | Review | Write>;
+
+/** Events whose redaction task has started, per conversation. Swept entries are pruned once Go has the copy. */
+export const RedactLedger = defineDoc<{ started: Record<string, true> }>({
+	kind: "lifestream.redact-ledger",
+	version: 1,
+	scope: "conversation",
+	history: "latest",
+	fork: "current",
+	initial: () => ({ started: {} }),
+});
+
+/** Start a redaction task for each event that has none yet. Call inside a commit. */
+export async function startRedaction(tx: Tx, conversationId: ConversationId, redact: RedactTask, owner: string, eventIds: readonly string[]) {
+	const ledger = await tx.doc(RedactLedger, conversationId);
+	for (const eventId of eventIds) {
+		if (ledger.started[eventId]) continue;
+		ledger.started[eventId] = true;
+		await tx.createTask(redact, { owner, eventId }, { ownership: { kind: "conversation" }, background: true, conversationId });
+	}
+}
+
+/**
+ * Start tasks for every unredacted member, and forget ledger entries Go
+ * no longer lists (their copy exists). Pruning only when the list is
+ * complete keeps an in-flight entry from being dropped.
+ */
+export async function sweepRedactions(tx: Tx, conversationId: ConversationId, redact: RedactTask, owner: string, unredacted: readonly string[], complete: boolean) {
+	await startRedaction(tx, conversationId, redact, owner, unredacted);
+	if (!complete) return;
+	const ledger = await tx.doc(RedactLedger, conversationId);
+	const pending = new Set(unredacted);
+	for (const id of Object.keys(ledger.started)) if (!pending.has(id)) delete ledger.started[id];
+}
+
+export type RedactTask = ReturnType<typeof redactionTask>;
 
 /** Asks a model for sensitive spans in one chunk. Tests pass a stub. */
 export type Reviewer = (chunk: string, rules: string[], ctx: Context) => Promise<Span[]>;

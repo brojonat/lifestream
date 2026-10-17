@@ -226,6 +226,8 @@ func TestPushEventsRejects(t *testing.T) {
 		"agent source":   `{"type":"label.applied","source":"agent"}`,
 		"parent smuggle": `{"type":"note","parent_id":"x"}`,
 		"bad in batch":   `[{"type":"note"},{"payload":{}}]`,
+		"no session":     `[{"type":"note"},{"type":"llm.message","payload":{"sequence":1}}]`,
+		"session key":    `{"type":"llm.message","idempotency_key":"k","payload":{"session_id":"s","sequence":1}}`,
 	} {
 		if rec := postEvents(h, token, body); rec.Code != 400 {
 			t.Errorf("%s: got %d, want 400", name, rec.Code)
@@ -233,5 +235,25 @@ func TestPushEventsRejects(t *testing.T) {
 	}
 	if evs, _ := st.Events(ctx, owner.ID, 0, 10); len(evs) != 0 {
 		t.Fatalf("rejected batches appended %d events", len(evs))
+	}
+}
+
+func TestPushSessionBatchTwice(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	owner, token, _ := st.AddUser(ctx, "me", "+15555550100")
+	h := Events(st, quiet)
+	batch := "{\"type\":\"llm.message\",\"source\":\"claude-code\",\"payload\":{\"session_id\":\"s1\",\"sequence\":0,\"message\":{\"type\":\"user\"}}}\n" +
+		"{\"type\":\"llm.message\",\"source\":\"claude-code\",\"payload\":{\"session_id\":\"s1\",\"sequence\":1,\"message\":{\"type\":\"assistant\"}}}\n"
+	for i, wantCreated := range []bool{true, false} {
+		rec := postEvents(h, token, batch)
+		var resp struct{ Events []Result }
+		json.Unmarshal(rec.Body.Bytes(), &resp)
+		if rec.Code != 200 || len(resp.Events) != 2 || resp.Events[0].Created != wantCreated || resp.Events[1].Created != wantCreated {
+			t.Fatalf("send %d: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+	if evs, _ := st.Events(ctx, owner.ID, 0, 10); len(evs) != 2 {
+		t.Fatalf("a resent batch made duplicates: %d events", len(evs))
 	}
 }

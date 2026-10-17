@@ -66,7 +66,7 @@ Public listener (`--addr`, what the ingress exposes):
 | Route | What |
 | --- | --- |
 | `POST /twilio/sms` | Twilio webhook. Verifies `X-Twilio-Signature`, drops unknown senders, appends `message.received`, answers empty TwiML. Never waits on the agent. |
-| `POST /events` | Generic JSON events, `Authorization: Bearer <user token>`. One object, a JSON array, or JSONL. |
+| `POST /events` | Generic JSON events, `Authorization: Bearer <user token>`. One object, a JSON array, or JSONL; a bad event rejects the whole batch. `llm.message` events (capture adapters) are keyed by `(session_id, sequence)`, so resending a batch is safe; see [Sessions](#sessions). |
 | `GET /` | Metrics: per metric collection, latest / 7-day average / change vs the week before, and a chart of readings with a trailing 7-day average (live over SSE) |
 | `GET /inbox` | The last 50 raw events and what each became (labels, values, flags); flagged ones highlighted |
 | `GET /collections`, `GET /c/{id}` | Collections; one collection's definition history (each version) and members |
@@ -90,7 +90,8 @@ side of the contract):
 | `GET /api/collections?owner=&status=` | Current collection definitions with their rules |
 | `GET /api/collections/{id}/members` | Members, each with the definition version it was labeled under |
 | `GET /api/rules?owner=` | The rules doc |
-| `GET /api/events?owner=&since=&after=&limit=&max_payload=` | Events in log order; payloads over `max_payload` bytes (default 4096) are elided, with `payload_size` |
+| `GET /api/events?owner=&since=&after=&limit=&max_payload=&dispatched=` | Events in log order; payloads over `max_payload` bytes (default 4096) are elided, with `payload_size`. `dispatched=1` keeps only what the dispatcher sends the agent (raw events minus session tails); the look-back uses it |
+| `GET /api/unredacted?owner=&limit=` | Ids of collection members with no `redaction.created` yet, oldest first; the agent's redaction sweep reads it |
 | `GET /api/events/{id}/children` | Events derived from it |
 | `GET /api/events/{id}` | One event; `?offset=&limit=` returns a byte range of a large payload as `data` |
 | `POST /api/events` | Append a derived event `{owner, type, parent_id?, payload}`. `Idempotency-Key` header = the Pi Durable tool *task* id (`api.taskId`; provider tool-call ids aren't unique). 201 new, 200 replay, 422 when it contradicts current state (unknown collection, closed collection, bad version). |
@@ -101,6 +102,25 @@ The agent may append `collection.started|amended|stopped|resumed`,
 `redaction.created`. Payload shapes are the structs in
 `internal/store/projections.go`; a collection's id is the id of its
 `collection.started` event.
+
+### Sessions
+
+A capture adapter sends one `llm.message` event per message, tool call or
+result, as it happens. The payload is
+`{session_id, sequence, harness, model?, cwd?, git?, message}`: `message`
+is the harness's own JSON, unchanged. A session is the events sharing a
+`session_id`.
+
+- Only a session's first 3 events (`store.SessionHead`) reach the agent.
+  The look-back judges only those too.
+- Labeling any message labels its session: the session's other events
+  join the collection, and later ones join on arrival while the
+  collection is open. No model call.
+- Removing one message (`label.removed`, or the owner's
+  `label.corrected` remove) takes the whole session out, and later
+  messages stop joining. An owner's add puts it back.
+- Members that joined this way never pass through the agent; its
+  redaction sweep gives them their redacted copy.
 
 ## Configuration
 
@@ -131,6 +151,7 @@ Node ≥ 22.19 (mise pins 25), no build step: `node src/main.ts`. Pi Durable
 | `DATA_DIR` | Where `agent.db` lives (default `~/.lifestream`) |
 | `AGENT_MODEL` | `provider/modelId` (default `anthropic/claude-haiku-4-5-20251001`); stored per conversation when it is created |
 | `ANTHROPIC_API_KEY` | Read by the Anthropic provider |
+| `SWEEP_SECONDS` | How often the redaction sweep runs (default 30) |
 
 One conversation per owner. Each event is submitted with its id as
 `requestId` (dedup survives restarts); SMS and dashboard events use
@@ -150,7 +171,10 @@ deterministic scanner (`agent/src/scanner.ts`; corpus in
 `testdata/secrets.json`) masks keys, tokens, private keys, connection
 passwords, emails and phone numbers, then the model reviews what's left in
 12 KB chunks (up to 10) against the rules doc. The model never sees what
-the scanner caught. Payloads over 4 KB reach the conversation as pointers. Tests use pi-ai's faux provider;
+the scanner caught. Every redaction starts through a per-conversation
+ledger, so one event never gets two tasks; a sweep every `SWEEP_SECONDS`
+starts tasks for members Go added without the agent (session messages).
+Payloads over 4 KB reach the conversation as pointers. Tests use pi-ai's faux provider;
 `test/e2e.test.ts` drives the real Go binary.
 
 ## Deploy

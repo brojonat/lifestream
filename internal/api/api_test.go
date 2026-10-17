@@ -183,3 +183,39 @@ func TestRules(t *testing.T) {
 		t.Fatalf("rules: %d %v", code, out)
 	}
 }
+
+func TestSessionsThroughTheAPI(t *testing.T) {
+	e := setup(t)
+	var msgs []store.Event
+	for seq := range store.SessionHead + 2 {
+		ev, _, err := e.st.Append(context.Background(), store.Event{Owner: e.owner, Source: "pi", Type: store.TypeLLMMessage,
+			Payload: json.RawMessage(`{"session_id":"s1","sequence":` + itoa(int64(seq)) + `,"message":{}}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		msgs = append(msgs, ev)
+	}
+	code, out := e.do("GET", "/api/events?owner="+e.owner+"&dispatched=1", "")
+	if code != 200 || len(out["events"].([]any)) != store.SessionHead {
+		t.Fatalf("dispatched=1: %d %v", code, out)
+	}
+	code, out = e.do("GET", "/api/events?owner="+e.owner, "")
+	if code != 200 || len(out["events"].([]any)) != len(msgs) {
+		t.Fatalf("all events: %d %v", code, out)
+	}
+
+	_, c := e.do("POST", "/api/events", body(map[string]any{"owner": e.owner, "type": "collection.started", "payload": map[string]any{"name": "x", "include": "x"}}))
+	cid := c["id"].(string)
+	code, _ = e.do("POST", "/api/events", body(map[string]any{"owner": e.owner, "type": "label.applied", "parent_id": msgs[0].ID,
+		"payload": map[string]any{"event_id": msgs[0].ID, "collection_id": cid, "definition_version": 1, "reason": "x"}}))
+	if code != 201 {
+		t.Fatalf("label: %d", code)
+	}
+	code, out = e.do("GET", "/api/unredacted?owner="+e.owner, "")
+	if got := out["events"].([]any); code != 200 || len(got) != len(msgs) || got[0] != msgs[0].ID {
+		t.Fatalf("unredacted: %d %v", code, out)
+	}
+	if code, _ = e.do("GET", "/api/unredacted", ""); code != 400 {
+		t.Fatalf("unredacted without owner: %d", code)
+	}
+}
