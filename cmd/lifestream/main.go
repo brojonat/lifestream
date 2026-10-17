@@ -1,4 +1,5 @@
-// Command lifestream is Personal event store with an agent that files what you send it.
+// Command lifestream is a personal event store with an agent that files
+// what you send it.
 package main
 
 import (
@@ -20,6 +21,9 @@ func main() {
 		Suggest: true,
 		Commands: []*cli.Command{
 			serveCommand(),
+			usersCommand(),
+			pushCommand(),
+			verifyCommand(),
 		},
 	}
 	if err := root.Run(context.Background(), os.Args); err != nil {

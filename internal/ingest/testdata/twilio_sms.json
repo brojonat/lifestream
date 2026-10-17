@@ -1,0 +1,7 @@
+{
+  "_comment": "Synthetic Twilio SMS webhook (fake numbers and SIDs), field set as Twilio sends it. Signature computed independently in Python; replace with a real recording at TODO 33.",
+  "auth_token": "test-auth-token-not-real",
+  "url": "https://lifestream.example.com/twilio/sms",
+  "signature": "wPVA5OwDEgu0oik+Iz/OwFnAv2s=",
+  "body": "ToCountry=US&ToState=CA&SmsMessageSid=SM0f3c1a9e2b7d4c5e8f9a0b1c2d3e4f50&NumMedia=0&ToCity=&FromZip=94103&SmsSid=SM0f3c1a9e2b7d4c5e8f9a0b1c2d3e4f50&FromState=CA&SmsStatus=received&FromCity=SAN+FRANCISCO&Body=weight+175&FromCountry=US&To=%2B15555550199&ToZip=&NumSegments=1&MessageSid=SM0f3c1a9e2b7d4c5e8f9a0b1c2d3e4f50&AccountSid=AC00000000000000000000000000000000&From=%2B15555550100&ApiVersion=2010-04-01"
+}

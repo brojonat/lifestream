@@ -9,12 +9,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/brojonat/lifestream/internal/bus"
+	"github.com/brojonat/lifestream/internal/ingest"
 	"github.com/brojonat/lifestream/internal/metrics"
 	"github.com/brojonat/lifestream/internal/state"
 	"github.com/brojonat/lifestream/internal/watch"
@@ -38,11 +38,16 @@ and LOG_FORMAT=json for machine-readable logs.`,
 				Usage:   "listen `ADDR`",
 				Sources: cli.EnvVars("LIFESTREAM_ADDR"),
 			},
+			dataDirFlag(),
 			&cli.StringFlag{
-				Name:        "data-dir",
-				Usage:       "where the embedded store keeps its files `DIR`",
-				Sources:     cli.EnvVars("LIFESTREAM_DATA_DIR"),
-				DefaultText: "~/.lifestream",
+				Name:    "public-url",
+				Usage:   "base `URL` as Twilio sees it, for webhook signatures",
+				Sources: cli.EnvVars("LIFESTREAM_PUBLIC_URL"),
+			},
+			&cli.StringFlag{
+				Name:    "twilio-auth-token",
+				Usage:   "Twilio auth `TOKEN`; /twilio/sms is off without it",
+				Sources: cli.EnvVars("TWILIO_AUTH_TOKEN"),
 			},
 			&cli.StringSliceFlag{
 				Name:  "watch",
@@ -64,18 +69,15 @@ and LOG_FORMAT=json for machine-readable logs.`,
 }
 
 func runServe(ctx context.Context, cmd *cli.Command) error {
-	dataDir := cmd.String("data-dir")
-	if dataDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("resolving home directory: %w", err)
-		}
-		dataDir = filepath.Join(home, ".lifestream")
-	}
 	log := newLogger()
-
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	st, dataDir, err := openStore(ctx, cmd)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
 
 	b, err := bus.Start(dataDir)
 	if err != nil {
@@ -106,11 +108,22 @@ func runServe(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", addr, err)
 	}
+	mux := http.NewServeMux()
+	if token := cmd.String("twilio-auth-token"); token != "" {
+		if cmd.String("public-url") == "" {
+			return fmt.Errorf("--public-url (LIFESTREAM_PUBLIC_URL) is required with a Twilio auth token")
+		}
+		mux.Handle("POST /twilio/sms", ingest.Twilio(st, token, cmd.String("public-url"), log))
+	} else {
+		log.Warn("TWILIO_AUTH_TOKEN unset; /twilio/sms is off")
+	}
+	mux.Handle("POST /events", ingest.Events(st, log))
+	mux.Handle("/", web.NewHandler(web.Deps{
+		App: "Lifestream", Store: store, Log: log,
+		Collector: collector, MetricsKV: mkv, MetricsStream: mstream, JS: b.JS(), DataDir: dataDir, Interval: interval,
+	}))
 	srv := &http.Server{
-		Handler: web.NewHandler(web.Deps{
-			App: "Lifestream", Store: store, Log: log,
-			Collector: collector, MetricsKV: mkv, MetricsStream: mstream, JS: b.JS(), DataDir: dataDir, Interval: interval,
-		}),
+		Handler:           mux,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 		ReadHeaderTimeout: 10 * time.Second,
 		// No WriteTimeout: it would sever the SSE streams.

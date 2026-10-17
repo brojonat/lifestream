@@ -50,6 +50,7 @@ Tests use temp dirs only and never touch a real data dir.
 lifestream serve                 # run the service
 lifestream users add --name me --phone +15555550100
                                  # allowlist a user; prints {id, token} as JSON
+lifestream users ls              # JSONL
 echo '{"type":"note","payload":{"text":"hi"}}' | lifestream push
                                  # POST JSON events from stdin to $LIFESTREAM_URL
 lifestream rebuild               # drop and rebuild every projection from events
@@ -89,7 +90,7 @@ Environment variables only (mise loads `.env` if present; never commit it).
 | `LIFESTREAM_API_ADDR` | serve | Internal API listen address (default `127.0.0.1:8081`) |
 | `LIFESTREAM_DATA_DIR` | serve, users, rebuild, verify | Where `lifestream.db` and the bus live (default `~/.lifestream`) |
 | `LIFESTREAM_PUBLIC_URL` | serve | Base URL as Twilio sees it, for signature checks |
-| `TWILIO_AUTH_TOKEN` | serve | Verifies Twilio webhooks |
+| `TWILIO_AUTH_TOKEN` | serve | Verifies Twilio webhooks; `/twilio/sms` is off without it |
 | `LIFESTREAM_AGENT_URL` | serve | Where the dispatcher POSTs raw events (unset: no dispatch) |
 | `LIFESTREAM_URL` | push | Base URL of the service |
 | `LIFESTREAM_TOKEN` | push | A user token from `users add` |
@@ -100,7 +101,7 @@ Environment variables only (mise loads `.env` if present; never commit it).
 
 ```
 cmd/lifestream/      CLI and wiring
-internal/events/     event store: schema, Append, hash chain, dispatch state
+internal/store/      SQLite: events (append-only, hash chain), users, dispatch state, projections
 internal/ingest/     /twilio/sms and /events
 internal/bus/        embedded NATS (in-process) used as the wake-up bus
 internal/metrics/    process metrics, /metrics
