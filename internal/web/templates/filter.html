@@ -1,0 +1,3 @@
+{{define "filter"}}<div id="filter"><button type="button" aria-pressed="{{if .StarredOnly}}true{{else}}false{{end}}" title="Show only starred sessions" data-on:click="@post('/prefs/starred')">{{if .StarredOnly}}★ starred only{{else}}☆ all sessions{{end}}</button></div>
+{{end}}
+

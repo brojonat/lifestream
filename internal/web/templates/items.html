@@ -1,0 +1,22 @@
+{{define "region"}}<main id="items">
+<div class="row"><h2>Items</h2><span class="muted">{{len .Items}} {{if .StarredOnly}}starred{{else}}total{{end}}</span></div>
+<form class="add" data-on:submit="@post('/items', {contentType: 'form'}); el.reset()">
+  <input name="title" placeholder="Add an item" autocomplete="off" aria-label="New item title" required>
+  <button type="submit">Add</button>
+</form>
+{{if .Items}}
+<table>
+<thead><tr><th></th><th>Item</th><th>Created</th><th></th></tr></thead>
+<tbody>
+{{range .Items}}<tr>
+  <td><button class="star" title="star" data-on:click="@post('/i/{{.ID}}/star')">{{if .Starred}}★{{else}}☆{{end}}</button></td>
+  <td><a href="/i/{{.ID}}">{{.Title}}</a>{{with .Note}}<br><span class="muted">{{. | firstLine | trunc 120}}</span>{{end}}</td>
+  <td>{{.Created | ago}}</td>
+  <td><button class="x" title="delete" data-on:click="@delete('/i/{{.ID}}')">×</button></td>
+</tr>
+{{end}}</tbody>
+</table>
+{{else if .StarredOnly}}<p class="empty">No starred items.</p>
+{{else}}<p class="empty">Nothing yet. Add an item above, then open this page in a second tab.</p>{{end}}
+</main>
+{{end}}

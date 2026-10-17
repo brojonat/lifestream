@@ -1,0 +1,15 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/lifestream ./cmd/lifestream"
+  bin = "./tmp/lifestream"
+  args_bin = ["serve"]
+  include_ext = ["go", "html", "css", "js"]
+  exclude_dir = ["tmp", "logs", ".agents", ".claude"]
+  delay = 500
+  kill_delay = "2s"
+  send_interrupt = true
+
+[log]
+  main_only = true

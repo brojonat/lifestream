@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "skills": {
+    "air-go": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "skillPath": "skills/air-go/SKILL.md",
+      "computedHash": "73686e3bf80d1a6d892c9c6e29b4b3b3b84d3a41e98554c1cb28c11bb3fd808b"
+    },
+    "datastar": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "skillPath": "skills/datastar/SKILL.md",
+      "computedHash": "a1838c986bdc58189f7e7dd778dca68e44ffb0ba6bca743b2d072577d0e626c6"
+    },
+    "go-service": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "skillPath": "skills/go-service/SKILL.md",
+      "computedHash": "c17a7c2951faa3a4c98086cfd907c7ea97a36d86204ff28f666c989cee86c85e"
+    },
+    "k8s-deployment": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "skillPath": "skills/k8s-deployment/SKILL.md",
+      "computedHash": "4932f333bf6c80b56ed8765719906aefa0bf842c77ae3f8c115e2550b874c39b"
+    },
+    "litestream-k8s": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "skillPath": "skills/litestream-k8s/SKILL.md",
+      "computedHash": "44d5a29261cd7fe873ccc6437b71be126939a5effed3923ef8a2ab91ebb161d0"
+    },
+    "sqlite": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "skillPath": "skills/sqlite/SKILL.md",
+      "computedHash": "092f78a7808cc25095ef4ff4cf812bc4aa203bdc49a8fef0330d0e2ed9b61011"
+    },
+    "systematic-debugging": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "skillPath": "skills/systematic-debugging/SKILL.md",
+      "computedHash": "276fb0aadb002ab930cc2a56de89e16995a2e3e70b33587652bf0a5fb123148d"
+    },
+    "test-driven-development": {
+      "source": "obra/superpowers",
+      "sourceType": "github",
+      "skillPath": "skills/test-driven-development/SKILL.md",
+      "computedHash": "3cfe4ebb6fa7288f668d87880d279c8e48f7a92b63415e296857060f5ce22e05"
+    },
+    "urfave-cli": {
+      "source": "brojonat/llmsrules",
+      "sourceType": "github",
+      "skillPath": "skills/urfave-cli/SKILL.md",
+      "computedHash": "1c4b7c47c44c2f0a57ad64db289614e4901709e6c4376adbea4ec8f1fec3e49c"
+    }
+  }
+}

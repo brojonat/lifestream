@@ -1,0 +1,24 @@
+{{define "region"}}<main id="item">
+{{with .Item}}
+<div class="row">
+  <button class="star" title="star" data-on:click="@post('/i/{{.ID}}/star')">{{if .Starred}}★{{else}}☆{{end}}</button>
+  <h2>{{.Title}}</h2>
+  <span class="muted">created {{.Created | ago}} · updated {{.Updated | ago}}</span>
+</div>
+<div class="note" data-signals:_editing__ifmissing="false" data-note="{{.Note}}">
+  <div class="note-view" data-show="!$_editing" tabindex="0" role="button" title="Click to edit"
+       data-on:click="$_editing = true; el.parentElement.querySelector('textarea').value = el.parentElement.dataset.note; el.parentElement.querySelector('textarea').focus()"
+       data-on:keydown="evt.key === 'Enter' && el.click()">
+    {{if .Note}}<div class="note-text">{{.Note}}</div>{{else}}<div class="note-text muted">Add a note</div>{{end}}
+    <div class="muted">click to edit</div>
+  </div>
+  <div class="note-edit" data-show="$_editing">
+    <textarea name="note" aria-label="Note" data-ignore-morph data-bind:note
+              data-on:input__debounce.500ms="@put('/i/{{.ID}}/note')"
+              data-on:keydown="evt.key === 'Escape' && ($_editing = false)">{{.Note}}</textarea>
+    <div class="row"><button type="button" data-on:click="$_editing = false">Done</button><span class="muted">saves as you type · Esc to close</span></div>
+  </div>
+</div>
+{{end}}
+</main>
+{{end}}

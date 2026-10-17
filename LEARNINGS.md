@@ -90,3 +90,64 @@ examples as possibly out of date.
 **How to avoid:** the Codex capture install step has to enable hooks in
 `config.toml` as well as writing `hooks.json`. Check that a test turn
 actually reaches the server.
+
+## Inherited from the go-local-app template
+
+**Embedded NATS with no TCP port:** `server.Options{DontListen: true}` plus
+`nats.Connect("", nats.InProcessServer(srv))`. Set `ServerName`; JetStream
+wants one.
+
+**`kv.WatchAll(ctx, jetstream.UpdatesOnly())` is the read-loop shape:**
+render current state first, then block on `Updates()`. Without
+`UpdatesOnly` the watcher replays the bucket and sends a nil marker.
+
+**`kv.ListKeys` on an empty bucket returns `jetstream.ErrNoKeysFound`,** not
+an empty list.
+
+**Every KV bucket is a stream (`KV_<name>`),** so stream counts include them.
+
+**JetStream `AccountInfo().Limits` reports unlimited** for the default
+account even when the server was started with a max store; carry the
+configured ceiling from the bus.
+
+**A textarea the user types into must be `data-ignore-morph`,** or every
+re-render replaces what they are typing. Save with a debounced `@put` and
+let "saved 3s ago" come from the server.
+
+**Wrapping `http.ResponseWriter` for logging breaks SSE** unless the wrapper
+implements `http.Flusher`.
+
+**Inputs that carry values to the backend should submit as form fields**
+(`{contentType: 'form'}`), not signals: a shared signal name makes every
+input on the page converge on the last typed value.
+
+**`curl -sN -m 2 .../stream` exits 28.** That is the stream working.
+
+**If Air is killed hard, its child keeps the port.** `mise run stop` kills
+whatever listens on 8080.
+
+## Inherited from python-warehouse-dashboard: Datastar and Rocket
+
+**Use an open shadow root for anything d3 draws.** Datastar's morph syncs a
+host element's attributes and then morphs its *light-DOM* children toward
+the server's markup. The server sends an empty `<chart-x ...></chart-x>`, so
+in Rocket's `light` mode every patch would morph away d3's SVG. In
+`mode: 'open'` the chart lives in the shadow root and the morph only updates
+attributes, which flow through the prop codec to `observeProps` and d3.
+
+**Put an `id` on every component host** so the morph keeps the same element
+instance and transitions run, and **set `renderOnPropChange: false`**
+(otherwise Rocket re-runs `render()` and replaces the skeleton d3 draws
+into).
+
+**`datastar-rocket.js` is a complete Datastar bundle plus Rocket,** not an
+add-on. Load it instead of `datastar.js`, never both.
+
+**Rocket's `emit(type, 'CA')` sends no detail.** A string second argument is
+treated as another event name. Always emit an object:
+`emit('chart-state', { state: 'CA' })`.
+
+**Clearing a form after `@post` is racy unless you use `payload`.** With
+`{contentType: 'form'}` the FormData is built inside the action's async
+flow, so `el.reset()` right after can empty it first. `{payload: {...}}` is
+evaluated synchronously. Pair it with `data-ignore-morph` on inputs.

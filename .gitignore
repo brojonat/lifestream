@@ -1,0 +1,10 @@
+/lifestream
+/bin/
+/logs/
+/tmp/
+.env*
+*.db
+*.db-*
+node_modules/
+/.agents/
+/.claude/skills/

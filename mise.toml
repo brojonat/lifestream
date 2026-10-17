@@ -1,3 +1,39 @@
 [tools]
 claude = "latest"
 claude-code = "latest"
+go = "1.27"
+
+[env]
+_.file = { path = ".env", redact = false }
+
+[tasks.setup]
+description = "Resolve Go deps and install dev tools (air)"
+run = ["go mod tidy", "go install github.com/air-verse/air@latest"]
+
+[tasks.build]
+description = "Build ./bin/lifestream"
+run = 'go build -ldflags "-X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" -o bin/lifestream ./cmd/lifestream'
+
+[tasks.test]
+description = "Run Go tests (temp-dir fixtures only)"
+run = "go test ./..."
+
+[tasks.lint]
+description = "gofmt check + go vet"
+run = ['test -z "$(gofmt -l cmd internal)" || { gofmt -l cmd internal; exit 1; }', "go vet ./..."]
+
+[tasks.dev]
+description = "Serve with hot reload (air), tee to logs/serve.log"
+run = 'mkdir -p logs; f() { air "$@" 2>&1 | tee logs/serve.log; }; f'
+
+[tasks.dev-agent]
+description = "Run the Pi Durable agent with reload, tee to logs/agent.log"
+run = 'mkdir -p logs; test -d agent || { echo "agent/ does not exist yet (TODO 17)" >&2; exit 1; }; f() { cd agent && npm run dev -- "$@" 2>&1 | tee ../logs/agent.log; }; f'
+
+[tasks.stop]
+description = "Kill whatever listens on port 8080 (an orphaned air child, usually)"
+run = "kill $(lsof -nP -t -iTCP:8080 -sTCP:LISTEN) 2>/dev/null || true"
+
+[tasks.deploy]
+description = "Build images and apply k8s manifests (not set up yet, TODO 32)"
+run = 'echo "deploy is not set up yet (TODO 32)" >&2; exit 1'

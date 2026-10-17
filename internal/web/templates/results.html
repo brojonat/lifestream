@@ -1,0 +1,9 @@
+{{define "results"}}<div id="results">{{if .Query}}
+{{if .Items}}
+<h2>Matches for “{{.Query}}”</h2>
+<ol>
+{{range .Items}}<li><a href="/i/{{.ID}}">{{.Title}}</a>{{with .Note}} <span class="muted">{{. | firstLine | trunc 100}}</span>{{end}}</li>
+{{end}}</ol>
+{{else}}<h2>Nothing matches “{{.Query}}”</h2>{{end}}
+{{end}}</div>
+{{end}}

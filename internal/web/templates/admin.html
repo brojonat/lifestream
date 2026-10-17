@@ -1,0 +1,42 @@
+{{define "region"}}<main id="admin" class="viz-root">
+<div class="row"><h2>Diagnostics</h2><span class="muted">pid {{.Limits.PID}} · up {{.Uptime}} · data in <code>{{.DataDir}}</code> · sampled every {{.Interval}}{{if .Sample}} · last {{.Sample.Time | ago}}{{end}}</span></div>
+{{if not .Sample}}<p class="empty">No samples yet.</p>{{else}}
+<section class="tiles" aria-label="resource usage">
+{{range .Tiles}}<article class="tile{{if .Over}} over{{end}}">
+  <div class="label">{{.Label}}</div>
+  <div class="value">{{.ValueText}}<span class="unit">{{.Unit}}</span></div>
+  {{.Spark}}
+  <form class="threshold" data-on:submit="@put('/admin/threshold/{{.Name}}', {contentType: 'form'})">
+    <label><span class="muted">limit</span>
+      <input type="number" step="any" min="0" name="value" data-ignore-morph value="{{.ThresholdText}}" placeholder="none"
+             data-on:change="@put('/admin/threshold/{{.Name}}', {contentType: 'form'})"></label>
+  </form>
+  {{if .Over}}<div class="status critical" role="status">⚠ over {{.ThresholdText}}{{.Unit}}</div>{{else if .Threshold}}<div class="status good" role="status">✓ under {{.ThresholdText}}{{.Unit}}</div>{{end}}
+</article>
+{{end}}
+</section>
+<section class="meters" aria-label="usage against limits">
+{{range .Meters}}<div class="meter">
+  <div class="row"><span>{{.Label}}</span><span class="muted">{{.Text}}</span></div>
+  <div class="track" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{.Pct}}" aria-label="{{.Label}}"><div class="fill {{.Level}}" style="width:{{.Pct}}%"></div></div>
+</div>
+{{end}}
+</section>
+{{end}}
+<section aria-label="system limits">
+<h2>Limits as the app sees them</h2>
+<table>
+<tbody>
+<tr><th>Go</th><td>{{.Limits.GoVersion}} · {{.Limits.NumCPU}} CPUs · GOMAXPROCS {{.Limits.GOMAXPROCS}}</td></tr>
+<tr><th>Open files</th><td>{{if .Sample}}{{.Sample.OpenFiles}} of {{end}}{{.Limits.OpenFilesMax}} (RLIMIT_NOFILE)</td></tr>
+<tr><th>JetStream store</th><td>{{printf "%.1f" .Limits.StoreUsedMB}} MB used{{if .Limits.StoreLimitMB}} of {{printf "%.0f" .Limits.StoreLimitMB}} MB{{else}}, unlimited{{end}} · {{.Limits.Streams}} streams · {{.Limits.Consumers}} consumers</td></tr>
+<tr><th>JetStream memory</th><td>{{printf "%.1f" .Limits.MemUsedMB}} MB used{{if .Limits.MemLimitMB}} of {{printf "%.0f" .Limits.MemLimitMB}} MB{{else}}, unlimited{{end}}</td></tr>
+<tr><th>Data dir disk</th><td>{{printf "%.0f" .Limits.DiskFreeMB}} MB free of {{printf "%.0f" .Limits.DiskTotalMB}} MB at <code>{{.DataDir}}</code></td></tr>
+
+<tr><th>Prometheus</th><td><a href="/metrics">/metrics</a></td></tr>
+</tbody>
+</table>
+</section>
+</main>
+{{end}}
+
