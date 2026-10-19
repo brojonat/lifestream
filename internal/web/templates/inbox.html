@@ -20,7 +20,6 @@
   <td class="became">{{range .Labels}}<span class="chip" title="{{.Reason}}">{{.Name}}</span>{{end}}
       {{range .Values}}<span class="chip">{{.}}</span>{{end}}
       {{range .Flags}}<div>⚠ {{.}}</div>{{end}}
-      {{if .Redacted}}<span class="muted">redacted copy</span>{{end}}
       {{if $.Open}}<details class="add"><summary>add to…</summary>
         <form data-on:submit="@post('/inbox/add', {contentType: 'form'})">
           <input type="hidden" name="event_id" value="{{.ID}}">

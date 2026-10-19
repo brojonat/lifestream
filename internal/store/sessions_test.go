@@ -131,18 +131,6 @@ func TestLabelingOneMessageLabelsTheSession(t *testing.T) {
 	if n := len(memberIDs(t, s, c.ID)); n != 5 {
 		t.Fatalf("after the owner's add: %d members, want the whole session (5)", n)
 	}
-
-	unredacted, err := s.Unredacted(context.Background(), f.owner, 100)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(unredacted) != 5 {
-		t.Fatalf("unredacted %v, want the 5 session members", unredacted)
-	}
-	f.must("redaction.created", m0.ID, map[string]any{"payload": map[string]any{}})
-	if unredacted, _ = s.Unredacted(context.Background(), f.owner, 100); len(unredacted) != 4 || unredacted[0] == m0.ID {
-		t.Fatalf("after redacting m0: unredacted %v", unredacted)
-	}
 }
 
 func TestSessionRebuildEqualsIncremental(t *testing.T) {

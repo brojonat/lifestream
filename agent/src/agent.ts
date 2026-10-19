@@ -4,12 +4,11 @@
 
 import type { Context } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai/models";
-import { type Conversation, type ConversationId, configure, createRegistry, defineDoc, defineExtension, Harness } from "@earendil-works/pi-durable";
+import { type Conversation, type ConversationId, configure, createRegistry, defineDoc, Harness } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { collectionsExtension, OwnerDoc } from "./collections.ts";
 import type { GoApi, StoredEvent } from "./goapi.ts";
 import type { LookBackOptions } from "./lookback.ts";
-import { type RedactionOptions, type RedactTask, redactionTask, sweepRedactions } from "./redaction.ts";
 import { rulesExtension } from "./rules.ts";
 
 /** owner -> conversation id; conversations have no keys of their own. */
@@ -34,31 +33,20 @@ export type AgentOptions = {
 	onReport?: (err: unknown) => void;
 	/** Look-back knobs (a stub judge, a short retry delay); for tests. */
 	lookBack?: LookBackOptions;
-	/** Redaction knobs (a stub reviewer, a short retry delay); for tests. */
-	redaction?: RedactionOptions;
 };
-
-/** How many unredacted members one sweep handles per owner. */
-const SWEEP_LIMIT = 200;
 
 export class Agent {
 	readonly #harness: Harness;
 	readonly #model: AgentOptions["model"];
-	readonly #api: GoApi;
-	readonly #redact: RedactTask;
 
-	private constructor(harness: Harness, model: AgentOptions["model"], api: GoApi, redact: RedactTask) {
+	private constructor(harness: Harness, model: AgentOptions["model"]) {
 		this.#harness = harness;
 		this.#model = model;
-		this.#api = api;
-		this.#redact = redact;
 	}
 
 	static async open(opts: AgentOptions, ctx: Context): Promise<Agent> {
 		const registry = createRegistry();
-		const redact = redactionTask(opts.api, opts.redaction);
-		registry.install(defineExtension({ name: "redaction", tasks: [redact] }));
-		registry.install(collectionsExtension(opts.api, redact, { lookBack: opts.lookBack }));
+		registry.install(collectionsExtension(opts.api, { lookBack: opts.lookBack }));
 		registry.install(rulesExtension(opts.api));
 		const harness = await Harness.open(
 			await openNodeSqliteStorage(opts.storagePath),
@@ -66,7 +54,7 @@ export class Agent {
 			ctx,
 		);
 		harness.resume(); // finish work the last process left behind
-		return new Agent(harness, opts.model, opts.api, redact);
+		return new Agent(harness, opts.model);
 	}
 
 	/** Resolves if the harness fails; the host should exit and be restarted. */
@@ -104,25 +92,6 @@ export class Agent {
 			},
 			ctx,
 		);
-	}
-
-	/**
-	 * Start redaction for every collection member that has none, for every
-	 * owner. Session messages join collections in Go without reaching the
-	 * agent, so this is how they get their redacted copy. Returns how many
-	 * members were still unredacted.
-	 */
-	async sweep(ctx: Context): Promise<number> {
-		const byOwner = await this.#harness.commit(async (tx) => ({ ...(await tx.doc(Owners)).byOwner }), ctx);
-		let pending = 0;
-		for (const [owner, id] of Object.entries(byOwner)) {
-			const ids = await this.#api.unredacted(owner, SWEEP_LIMIT);
-			pending += ids.length;
-			const conv = await this.#harness.conversation(id as ConversationId, ctx);
-			if (!conv) continue;
-			await conv.commit((tx) => sweepRedactions(tx, conv.id, this.#redact, owner, ids, ids.length < SWEEP_LIMIT), ctx);
-		}
-		return pending;
 	}
 
 	async close(ctx: Context) {

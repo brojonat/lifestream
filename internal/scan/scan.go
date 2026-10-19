@@ -1,5 +1,5 @@
 // Package scan is the deterministic secret scanner, the Go twin of
-// agent/src/scanner.ts: the same patterns, the same [REDACTED:<kind>]
+// capture/strands' scan.py: the same patterns, the same [REDACTED:<kind>]
 // masks, pinned by the same corpus (testdata/secrets.json). Capture runs it
 // before anything leaves the machine. Patterns favor catching too much
 // over too little.
@@ -30,7 +30,7 @@ type pattern struct {
 }
 
 // Order matters: multi-line and prefixed tokens first, so later generic
-// rules see their masks. Keep in step with agent/src/scanner.ts.
+// rules see their masks. Keep in step with scan.py.
 var patterns = []pattern{
 	{kind: "private_key", re: regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----`)},
 	{kind: "aws_access_key", re: regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`)},

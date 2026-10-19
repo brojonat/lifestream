@@ -137,49 +137,6 @@ var migrations = []string{
 		occurred_at TEXT NOT NULL
 	);
 	CREATE INDEX session_messages_session ON session_messages(owner, session_id, sequence);`,
-
-	// Paid notifications: topics, subscription periods, sent notifications
-	// (one row per send, not per subscriber).
-	`CREATE TABLE topics (
-		id            TEXT PRIMARY KEY, -- the topic.created event id
-		owner         TEXT NOT NULL,
-		name          TEXT NOT NULL,
-		description   TEXT NOT NULL,
-		price_kind    TEXT NOT NULL,
-		price_cents   INTEGER NOT NULL,
-		currency      TEXT NOT NULL,
-		cap           INTEGER,
-		history_start TEXT,
-		created_at    TEXT NOT NULL
-	);
-	CREATE INDEX topics_owner ON topics(owner, created_at);
-
-	CREATE TABLE subscriptions (
-		topic_id       TEXT NOT NULL,
-		subscriber     TEXT NOT NULL, -- email, lowercased
-		started_at     TEXT NOT NULL,
-		ended_at       TEXT,
-		end_reason     TEXT,
-		start_event_id TEXT NOT NULL,
-		PRIMARY KEY (topic_id, subscriber, started_at)
-	);
-	CREATE INDEX subscriptions_subscriber ON subscriptions(subscriber);
-
-	CREATE TABLE notifications (
-		event_id TEXT PRIMARY KEY,
-		owner    TEXT NOT NULL,
-		topic_id TEXT NOT NULL,
-		sent_at  TEXT NOT NULL
-	);
-	CREATE INDEX notifications_topic ON notifications(topic_id, sent_at);`,
-
-	// The owner's member order (a book's chapters), from collection.ordered.
-	`CREATE TABLE member_order (
-		collection_id TEXT NOT NULL,
-		event_id      TEXT NOT NULL,
-		position      INTEGER NOT NULL,
-		PRIMARY KEY (collection_id, event_id)
-	);`,
 }
 
 // Store is the open database. Writes are serialized by mu so the hash chain

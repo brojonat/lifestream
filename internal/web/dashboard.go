@@ -155,15 +155,14 @@ func signed(v float64) string {
 
 // inboxRow is a raw event and what it became, flattened for the template.
 type inboxRow struct {
-	ID       string
-	At       time.Time
-	Source   string
-	Text     string
-	Status   string // waiting, filed, flagged, ignored
-	Labels   []store.Membership
-	Values   []string
-	Flags    []string
-	Redacted bool
+	ID     string
+	At     time.Time
+	Source string
+	Text   string
+	Status string // waiting, filed, flagged, ignored
+	Labels []store.Membership
+	Values []string
+	Flags  []string
 }
 
 type inboxData struct {
@@ -215,8 +214,6 @@ func buildRow(it store.InboxItem) inboxRow {
 			}
 			json.Unmarshal(d.Payload, &p)
 			row.Flags = append(row.Flags, firstNonEmpty(p.Question, p.Reason, "needs review"))
-		case "redaction.created":
-			row.Redacted = true
 		}
 	}
 	switch {

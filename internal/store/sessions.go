@@ -140,30 +140,6 @@ func removeSession(ctx context.Context, tx *sql.Tx, collectionID, eventID string
 	return nil
 }
 
-// Unredacted returns the ids of an owner's collection members that have no
-// redaction.created child yet, oldest event first. Members that joined
-// through their session never passed through the agent, so it sweeps
-// these.
-func (s *Store) Unredacted(ctx context.Context, owner string, limit int) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id FROM events e WHERE e.owner = ?
-		AND EXISTS (SELECT 1 FROM collection_members m WHERE m.event_id = e.id)
-		AND NOT EXISTS (SELECT 1 FROM events r WHERE r.parent_id = e.id AND r.type = 'redaction.created')
-		ORDER BY e.seq LIMIT ?`, owner, limit)
-	if err != nil {
-		return nil, fmt.Errorf("listing unredacted members: %w", err)
-	}
-	defer rows.Close()
-	out := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("listing unredacted members: %w", err)
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
-}
-
 // applyCommonFormat adds the message to the common-format view.
 func applyCommonFormat(ctx context.Context, tx *sql.Tx, e Event, ref SessionRef) error {
 	var p struct {

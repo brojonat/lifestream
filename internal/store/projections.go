@@ -23,7 +23,6 @@ const (
 	TypeMetricObserved    = "metric.observed"
 	TypeRuleAdded         = "rule.added"
 	TypeRuleRemoved       = "rule.removed"
-	TypeCollectionOrdered = "collection.ordered"
 )
 
 // Collection kinds: a plain set of events, or a metric whose members also
@@ -52,12 +51,6 @@ type (
 	}
 	CollectionRef struct {
 		CollectionID string `json:"collection_id"`
-	}
-	// CollectionOrdered is the owner's order for members (a book's chapter
-	// order). Members it leaves out come after, newest label first.
-	CollectionOrdered struct {
-		CollectionID string   `json:"collection_id"`
-		Order        []string `json:"order"`
 	}
 	LabelApplied struct {
 		EventID           string `json:"event_id"`
@@ -344,41 +337,6 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 	case TypeLLMMessage:
 		return applySession(ctx, tx, e)
 
-	case TypeCollectionOrdered:
-		var p CollectionOrdered
-		if err := decode(e, &p); err != nil {
-			return err
-		}
-		c, err := collectionTx(ctx, tx, e.Owner, p.CollectionID)
-		if err != nil {
-			return err
-		}
-		seen := map[string]bool{}
-		for _, id := range p.Order {
-			if seen[id] {
-				return invalid("%s lists %s twice", e.Type, id)
-			}
-			seen[id] = true
-			var n int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM collection_members WHERE collection_id = ? AND event_id = ?`, c.ID, id).Scan(&n); err != nil {
-				return fmt.Errorf("projecting %s: %w", e.Type, err)
-			}
-			if n == 0 {
-				return invalid("event %s is not in collection %s", id, c.ID)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM member_order WHERE collection_id = ?`, c.ID); err != nil {
-			return fmt.Errorf("projecting %s: %w", e.Type, err)
-		}
-		for i, id := range p.Order {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO member_order (collection_id, event_id, position) VALUES (?, ?, ?)`, c.ID, id, i); err != nil {
-				return fmt.Errorf("projecting %s: %w", e.Type, err)
-			}
-		}
-
-	case TypeTopicCreated, TypeTopicAmended, TypeTopicSubscribed, TypeTopicUnsubscribed, TypeNotificationSent:
-		return applyTopic(ctx, tx, e)
-
 	case TypeMetricObserved:
 		var p MetricObserved
 		if err := decode(e, &p); err != nil {
@@ -490,7 +448,7 @@ func (s *Store) Rebuild(ctx context.Context) error {
 		return fmt.Errorf("rebuilding: %w", err)
 	}
 	defer tx.Rollback()
-	for _, t := range []string{"collections", "collection_rules", "collection_members", "metric_values", "rules", "session_events", "session_messages", "topics", "subscriptions", "notifications", "member_order"} {
+	for _, t := range []string{"collections", "collection_rules", "collection_members", "metric_values", "rules", "session_events", "session_messages"} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+t); err != nil {
 			return fmt.Errorf("rebuilding: clearing %s: %w", t, err)
 		}
@@ -686,15 +644,13 @@ type MemberEvent struct {
 	Event Event
 }
 
-// MemberEvents returns a collection's members with their events, at most
-// limit: the owner's order first (collection.ordered), then the rest,
-// newest event first.
+// MemberEvents returns a collection's members with their events, newest
+// event first, at most limit.
 func (s *Store) MemberEvents(ctx context.Context, collectionID string, limit int) ([]MemberEvent, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT m.definition_version, m.reason, m.label_event_id, m.labeled_at, e.seq, e.id, e.owner,
 		e.source, e.type, e.occurred_at, e.received_at, COALESCE(e.parent_id, ''), COALESCE(e.idempotency_key, ''), e.payload,
 		e.prev_hash, e.hash FROM collection_members m JOIN events e ON e.id = m.event_id
-		LEFT JOIN member_order o ON o.collection_id = m.collection_id AND o.event_id = m.event_id
-		WHERE m.collection_id = ? ORDER BY o.position IS NULL, o.position, e.seq DESC LIMIT ?`, collectionID, limit)
+		WHERE m.collection_id = ? ORDER BY e.seq DESC LIMIT ?`, collectionID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("listing member events: %w", err)
 	}

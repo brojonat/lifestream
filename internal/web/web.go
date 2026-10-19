@@ -89,7 +89,7 @@ type Server struct {
 // NewHandler wires the routes.
 func NewHandler(d Deps) http.Handler {
 	s := &Server{Deps: d, pages: map[string]*template.Template{}}
-	for _, name := range []string{"metrics", "inbox", "collections", "collection", "rules", "log", "artifacts", "topics", "admin"} {
+	for _, name := range []string{"metrics", "inbox", "collections", "collection", "rules", "log", "admin"} {
 		s.pages[name] = template.Must(template.New("").Funcs(funcs).ParseFS(files,
 			"templates/layout.html", "templates/"+name+".html"))
 	}
@@ -109,7 +109,6 @@ func NewHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /c/{id}", s.page("collection", s.collectionView))
 	mux.HandleFunc("GET /c/{id}/stream", s.stream("collection", s.collectionView, s.storeWatch))
 	mux.HandleFunc("POST /c/{id}/remove", s.removeMember)
-	mux.HandleFunc("POST /c/{id}/move", s.moveMember)
 	mux.HandleFunc("GET /log", s.page("log", s.logView))
 	mux.HandleFunc("GET /log/stream", s.stream("log", s.logView, s.storeWatch))
 	mux.HandleFunc("POST /log/{id}/undo", s.undoSteering)
@@ -118,14 +117,6 @@ func NewHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /rules/stream", s.stream("rules", s.rulesView, s.storeWatch))
 	mux.HandleFunc("POST /rules", s.addRule)
 	mux.HandleFunc("POST /rules/{id}/remove", s.removeRule)
-	mux.HandleFunc("GET /artifacts", s.page("artifacts", s.artifactsView))
-	mux.HandleFunc("GET /artifacts/stream", s.stream("artifacts", s.artifactsView, s.storeWatch))
-	mux.HandleFunc("POST /artifacts", s.saveArtifact)
-	mux.HandleFunc("GET /topics", s.page("topics", s.topicsView))
-	mux.HandleFunc("GET /topics/stream", s.stream("topics", s.topicsView, s.storeWatch))
-	mux.HandleFunc("POST /topics", s.createTopic)
-	mux.HandleFunc("POST /topics/{id}/history", s.setHistory)
-	mux.HandleFunc("POST /topics/{id}/send", s.sendNotification)
 	if s.Collector != nil {
 		mux.HandleFunc("GET /admin", s.page("admin", s.adminView))
 		mux.HandleFunc("GET /admin/stream", s.stream("admin", s.adminView, s.metricsWatch))
@@ -139,13 +130,6 @@ var funcs = template.FuncMap{
 	"num":    num,
 	"signed": signed,
 	"deref":  func(p *float64) float64 { return *p },
-	"cents":  func(c int64) string { return fmt.Sprintf("$%d.%02d", c/100, c%100) },
-	"kb": func(n int) string {
-		if n < 1<<20 {
-			return fmt.Sprintf("%.1f KB", float64(n)/1024)
-		}
-		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
-	},
 	"trunc": func(n int, s string) string {
 		if len(s) > n {
 			return s[:n] + "…"

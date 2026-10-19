@@ -58,7 +58,6 @@ func TestCorpusNegatives(t *testing.T) {
 	}
 }
 
-// The same cases as agent/test/scanner.test.ts.
 func TestContextIsKept(t *testing.T) {
 	for in, want := range map[string]string{
 		"DATABASE_URL=postgres://app:hunter2hunter2@db:5432/x":                     "DATABASE_URL=postgres://app:[REDACTED:connection_password]@db:5432/x",

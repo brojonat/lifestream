@@ -3,7 +3,6 @@ package web
 import (
 	"encoding/json"
 	"net/http"
-	"slices"
 	"time"
 
 	"github.com/brojonat/lifestream/internal/store"
@@ -128,39 +127,6 @@ func (s *Server) collectionView(r *http.Request) (any, error) {
 }
 
 // ---- write side: append label.corrected, answer 204, let streams repaint
-
-// moveMember handles POST /c/{id}/move with event_id and dir (up|down):
-// it swaps the member with its neighbor in the order the page shows and
-// appends the whole order as collection.ordered (a book's chapters).
-func (s *Server) moveMember(w http.ResponseWriter, r *http.Request) {
-	f, err := fields(w, r, "event_id", "dir")
-	if err != nil {
-		http.Error(w, "bad body", http.StatusBadRequest)
-		return
-	}
-	ctx := r.Context()
-	id := r.PathValue("id")
-	members, err := s.Events.MemberEvents(ctx, id, 10000)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	order := make([]string, len(members))
-	for i, m := range members {
-		order[i] = m.EventID
-	}
-	i := slices.Index(order, f["event_id"])
-	j := i - 1
-	if f["dir"] == "down" {
-		j = i + 1
-	}
-	if i < 0 || j < 0 || j >= len(order) || (f["dir"] != "up" && f["dir"] != "down") {
-		http.Error(w, "can't move that way", http.StatusUnprocessableEntity)
-		return
-	}
-	order[i], order[j] = order[j], order[i]
-	s.appendOwned(w, r, store.TypeCollectionOrdered, store.CollectionOrdered{CollectionID: id, Order: order})
-}
 
 // removeMember handles POST /c/{id}/remove with form field event_id.
 func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {

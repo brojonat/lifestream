@@ -10,7 +10,6 @@ import type { Context } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai/models";
 import { defineTask, type TaskRuntime } from "@earendil-works/pi-durable";
 import { ApiError, type Collection, type GoApi, type StoredEvent } from "./goapi.ts";
-import { type RedactTask, startRedaction } from "./redaction.ts";
 import { type Retry, retrying, retryPhase } from "./retry.ts";
 
 
@@ -18,7 +17,7 @@ export const DEFAULT_LOOKBACK_DAYS = 7;
 const BATCH = 20;
 
 /** Raw events worth judging; derived and bookkeeping events are not. */
-const SKIP_TYPES = /^(collection\.|label\.|rule\.|review\.|metric\.|redaction\.)/;
+const SKIP_TYPES = /^(collection\.|label\.|rule\.|review\.|metric\.)/;
 
 export type LookBackInput = {
 	owner: string;
@@ -76,8 +75,7 @@ export function parseVerdicts(text: string): Verdict[] {
 
 export type LookBackOptions = { judge?: Judge; retryBaseMs?: number };
 
-/** `redact` is the redaction task, started for every event the look-back labels. */
-export function lookBackTask(api: GoApi, redact: RedactTask, { judge, retryBaseMs }: LookBackOptions = {}) {
+export function lookBackTask(api: GoApi, { judge, retryBaseMs }: LookBackOptions = {}) {
 	// One batch: judge it, write the results, checkpoint the cursor. Writes
 	// use deterministic keys, so rerunning a batch after a crash or a retry
 	// changes nothing twice.
@@ -115,7 +113,6 @@ export function lookBackTask(api: GoApi, redact: RedactTask, { judge, retryBaseM
 		}
 
 		let changed = 0;
-		const labeled: string[] = [];
 		if (batch.length > 0) {
 			let ask = judge;
 			if (!ask) {
@@ -130,7 +127,6 @@ export function lookBackTask(api: GoApi, redact: RedactTask, { judge, retryBaseM
 				const key = `lookback:${collectionId}:v${c.version}:${v.event_id}`;
 				if (mode === "include" && v.member) {
 					await api.append(owner, "label.applied", { event_id: v.event_id, collection_id: c.id, definition_version: c.version, reason: `look-back: ${v.reason ?? "matches"}` }, { parentId: v.event_id, idempotencyKey: `${key}:label` });
-					labeled.push(v.event_id);
 					if (c.kind === "metric" && typeof v.value === "number") {
 						await api.append(owner, "metric.observed", { collection_id: c.id, value: v.value }, { parentId: v.event_id, idempotencyKey: `${key}:value` });
 					}
@@ -144,11 +140,7 @@ export function lookBackTask(api: GoApi, redact: RedactTask, { judge, retryBaseM
 		// Removed members drop out of the list, so the exclude cursor only moves
 		// past the ones that stayed.
 		if (mode === "exclude") next -= changed;
-		// The checkpoint and the redaction tasks for this batch commit together.
-		await runtime.commit(async (tx) => {
-			await startRedaction(tx, runtime.conversationId, redact, owner, labeled);
-			return { status: "running", checkpoint: { phase: "scan", after: next, checked: st.checked + batch.length, changed: st.changed + changed } };
-		}, ctx);
+		await runtime.commit(() => ({ status: "running", checkpoint: { phase: "scan", after: next, checked: st.checked + batch.length, changed: st.changed + changed } }), ctx);
 	}
 
 	return defineTask<LookBackInput, State, null>({

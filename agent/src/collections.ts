@@ -8,7 +8,6 @@ import { Type } from "@earendil-works/pi-ai";
 import { type ConversationId, defineDoc, defineExtension, defineTool, section, type ToolExecutionApi } from "@earendil-works/pi-durable";
 import { ApiError, type Collection, type GoApi } from "./goapi.ts";
 import { DEFAULT_LOOKBACK_DAYS, type LookBackOptions, lookBackTask } from "./lookback.ts";
-import { type RedactTask, startRedaction } from "./redaction.ts";
 
 /** Which owner a conversation belongs to. Written when the conversation is created. */
 export const OwnerDoc = defineDoc<{ owner: string }>({
@@ -43,7 +42,7 @@ Each user message is one event from the owner's event store: an SMS, a note, a c
 5. A label.corrected event from the dashboard means the owner fixed a label you made (or missed). Learn the boundary from it; if it shows a rule is missing, amend the collection so future events are filed correctly.
 6. A review.answered event is the owner's answer to a question you flagged; its payload has the question and the original event_id. Act on it now (label, log the value, amend a rule), and write down anything general it teaches.
 7. collection.* events from the dashboard are changes the owner already made, often undoing one of yours. They are applied: don't repeat or reverse them, but don't make the same change again either.
-8. If the owner teaches you something ("w means weight", "never sell anything from ~/work"), make it durable with add_rule. Background work and future conversations only see what is written down. Follow every entry in <owner_rules>.
+8. If the owner teaches you something ("w means weight", "ignore anything from ~/scratch"), make it durable with add_rule. Background work and future conversations only see what is written down. Follow every entry in <owner_rules>.
 
 Starting a collection or adding an include automatically labels the last 7 days of events in the background (pass lookback_days if the owner asks for another window); an exclude re-checks current members. A "Look-back ... finished" message is that job reporting; nothing to do.
 
@@ -62,12 +61,11 @@ export const text = (s: string) => ({ output: [{ type: "text" as const, text: s 
 export const fail = (s: string) => ({ ...text(s), isError: true });
 
 /**
- * Builds the extension. `api` is the Go client; `redact` is the redaction
- * task (from the redaction extension), started for every label;
- * `lookBack` tunes the look-back task (tests).
+ * Builds the extension. `api` is the Go client; `lookBack` tunes the
+ * look-back task (tests).
  */
-export function collectionsExtension(api: GoApi, redact: RedactTask, opts: { lookBack?: LookBackOptions } = {}) {
-	const LookBack = lookBackTask(api, redact, opts.lookBack);
+export function collectionsExtension(api: GoApi, opts: { lookBack?: LookBackOptions } = {}) {
+	const LookBack = lookBackTask(api, opts.lookBack);
 	// Every write: owner from the conversation, idempotency key from the tool
 	// task (stable when a replay-safe tool reruns after a crash).
 	// Starts the look-back over the last N days (or a re-check of members).
@@ -150,7 +148,7 @@ export function collectionsExtension(api: GoApi, redact: RedactTask, opts: { loo
 		execute: (a, tapi, ctx) =>
 			write(tapi, ctx, "label.applied", {
 				event_id: a.event_id, collection_id: a.collection_id, definition_version: a.definition_version, reason: a.reason,
-			}, a.event_id, (owner) => tapi.commit((tx) => startRedaction(tx, tapi.conversationId, redact, owner, [a.event_id]), ctx)),
+			}, a.event_id),
 	});
 
 	const logValue = defineTool({

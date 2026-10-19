@@ -25,7 +25,6 @@ var DerivedTypes = map[string]bool{
 	store.TypeMetricObserved:    true,
 	store.TypeRuleAdded:         true, // removing one is the owner's call, on the dashboard
 	"review.flagged":            true,
-	"redaction.created":         true,
 }
 
 // DefaultMaxPayload is how large a payload can be before list responses
@@ -45,7 +44,6 @@ func NewHandler(st *store.Store, log *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /api/events/{id}", h.event)
 	mux.HandleFunc("GET /api/events/{id}/children", h.children)
 	mux.HandleFunc("POST /api/events", h.appendEvent)
-	mux.HandleFunc("GET /api/unredacted", h.unredacted)
 	return mux
 }
 
@@ -149,27 +147,6 @@ func (h *handler) listEvents(w http.ResponseWriter, r *http.Request) {
 		out = append(out, summarize(e, maxPayload))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": out})
-}
-
-// GET /api/unredacted?owner=&limit=: ids of collection members with no
-// redaction.created yet, oldest first.
-func (h *handler) unredacted(w http.ResponseWriter, r *http.Request) {
-	owner := r.URL.Query().Get("owner")
-	if owner == "" {
-		writeError(w, http.StatusBadRequest, "owner is required")
-		return
-	}
-	limit, err := intParam(r.URL.Query().Get("limit"), 100)
-	if err != nil || limit < 1 || limit > 1000 {
-		writeError(w, http.StatusBadRequest, "limit must be an integer, 1-1000")
-		return
-	}
-	ids, err := h.st.Unredacted(r.Context(), owner, limit)
-	if err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": ids})
 }
 
 // Slice is a byte range of a large payload. Data is the raw text of that

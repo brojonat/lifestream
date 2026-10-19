@@ -51,7 +51,7 @@ const eventId = (context: { messages: { role: string; content: unknown }[] }) =>
 type Responses = Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0];
 
 /** Go (real binary, its own data dir) plus this agent with a faux model, wired as in the pod. */
-async function stack(responses: Responses, reviewer: (chunk: string) => Promise<{ text: string; kind: string }[]> = async () => []) {
+async function stack(responses: Responses) {
 	const dir = await mkdtemp(join(tmpdir(), "lifestream-e2e-"));
 	const user = JSON.parse(execFileSync(BIN, ["users", "add", "--data-dir", dir, "--name", "me", "--phone", "+15555550100"], { encoding: "utf8" }));
 	const [webPort, apiPort, agentPort] = [await freePort(), await freePort(), await freePort()];
@@ -60,8 +60,7 @@ async function stack(responses: Responses, reviewer: (chunk: string) => Promise<
 	faux.setResponses(responses);
 	const models = createModels();
 	models.setProvider(faux.provider);
-	const agent = await Agent.open({ storagePath: join(dir, "agent.db"), models, model: { provider: "faux", modelId: "faux-1" }, api: new GoApi(goApi),
-		redaction: { reviewer } }, ctx);
+	const agent = await Agent.open({ storagePath: join(dir, "agent.db"), models, model: { provider: "faux", modelId: "faux-1" }, api: new GoApi(goApi) }, ctx);
 	const agentServer = createServer(handler(agent, newLogger({ LOG_LEVEL: "error" }), ctx));
 	await new Promise<void>((r) => agentServer.listen(agentPort, "127.0.0.1", r));
 	const go = spawn(BIN, ["serve", "--data-dir", dir, "--addr", `127.0.0.1:${webPort}`, "--api-addr", `127.0.0.1:${apiPort}`,
@@ -74,7 +73,6 @@ async function stack(responses: Responses, reviewer: (chunk: string) => Promise<
 		log: () => log,
 		/** POST /events with the user's token; body is sent as is. */
 		push: (body: string) => fetch(`http://127.0.0.1:${webPort}/events`, { method: "POST", headers: { Authorization: `Bearer ${user.token}` }, body }),
-		children: async (id: string) => ((await (await fetch(`${goApi}/api/events/${id}/children`)).json()) as { events: { type: string; payload: any }[] }).events,
 		members: async (cid: string) => ((await (await fetch(`${goApi}/api/collections/${cid}/members`)).json()) as { members: { event_id: string }[] }).members,
 		async close() {
 			go.kill("SIGTERM");
@@ -100,7 +98,7 @@ test("text 'weight 175' end to end", { skip }, async () => {
 			], { stopReason: "toolUse" });
 		},
 		fauxAssistantMessage([fauxText("filed")]),
-	], async () => [{ text: "+15555550100", kind: "phone-again" }]);
+	]);
 	const sms = (body: string) => s.push(JSON.stringify({ type: "message.received", source: "twilio.sms", payload: { Body: body, From: "+15555550100" } }));
 	try {
 		assert.equal((await sms("track my weight")).status, 200);
@@ -114,12 +112,6 @@ test("text 'weight 175' end to end", { skip }, async () => {
 			return members.length === 1 ? members : undefined;
 		});
 		assert.equal(members.length, 1);
-
-		// The labeled SMS got a redacted copy in Go: the sender's number masked.
-		const msgId = ((await s.api.events(s.user.id, {})).find((e) => (e.payload as { Body?: string })?.Body === "weight 175"))!.id;
-		const copy = await until("redaction", async () => (await s.children(msgId)).find((k) => k.type === "redaction.created"));
-		assert.equal(copy.payload.payload.From, "[REDACTED:phone]");
-		assert.equal(copy.payload.payload.Body, "weight 175");
 
 		// The dashboard shows the reading.
 		await until("dashboard", async () => {
@@ -136,7 +128,7 @@ test("text 'weight 175' end to end", { skip }, async () => {
 	}
 });
 
-test("a captured session: its head is judged, the rest join without the model and are redacted", { skip }, async () => {
+test("a captured session: its head is judged, the rest join without the model", { skip }, async () => {
 	let collectionId = "";
 	const seen: string[] = []; // event ids the model was shown
 	// One responder for every model call: it starts the collection for the
@@ -174,13 +166,6 @@ test("a captured session: its head is judged, the rest join without the model an
 		assert.equal(ids.length, texts.length, "no duplicates from the resend");
 		assert.deepEqual(members.map((m) => m.event_id).sort(), [...ids].sort());
 
-		// The sweep (a timer in main.ts) gives every member its copy.
-		const copies = await until("redacted copies", async () => {
-			await s.agent.sweep(ctx);
-			const cs = await Promise.all(ids.map(async (id) => (await s.children(id)).find((k) => k.type === "redaction.created")));
-			return cs.every(Boolean) ? cs : undefined;
-		});
-		assert.equal(copies[0]!.payload.payload.message.text, "upgrade postgres to 17; key [REDACTED:aws_access_key]");
 		await (await s.agent.conversationFor(s.user.id, ctx)).waitForIdle(ctx);
 		const shown = seen.filter((id) => ids.includes(id));
 		assert.ok(shown.length <= 3, `the model saw ${shown.length} session events; only the head (3) should reach it`);

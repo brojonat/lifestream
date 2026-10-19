@@ -1,6 +1,6 @@
-"""Deterministic secret scanner: the Python twin of agent/src/scanner.ts and
-internal/scan. Same patterns in the same order, same [REDACTED:<kind>]
-masks, pinned by the same corpus (testdata/secrets.json)."""
+"""Deterministic secret scanner: the Python twin of internal/scan. Same
+patterns in the same order, same [REDACTED:<kind>] masks, pinned by the same
+corpus (testdata/secrets.json)."""
 
 import re
 from dataclasses import dataclass

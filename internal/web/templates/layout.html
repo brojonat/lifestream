@@ -72,17 +72,6 @@
   form.newrule textarea { flex: 1; min-height: 2.6rem; padding: .45rem .6rem; border-radius: 6px; resize: vertical;
     background: transparent; color: inherit; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
   ul.rules { list-style: none; padding: 0; margin: 0; }
-  form.artifact { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .5rem 0; }
-  form.artifact input[type=text], form.artifact input[type=url] { flex: 1 1 14rem; padding: .4rem .55rem; border-radius: 6px;
-    background: var(--surface); color: inherit; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
-  form.artifact input[type=file] { flex: 1 1 14rem; }
-  form.artifact textarea { flex: 1 1 18rem; min-height: 2.6rem; padding: .45rem .6rem; border-radius: 6px; resize: vertical;
-    background: var(--surface); color: inherit; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
-  form.artifact select { padding: .35rem .4rem; border-radius: 6px; background: var(--surface); color: inherit;
-    border: 1px solid color-mix(in srgb, currentColor 30%, transparent); }
-  form.move { display: inline-flex; gap: .15rem; margin-right: .35rem; }
-  section.topic { padding: .75rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
-  section.topic h3 { margin: 0; font-size: 1rem; }
   ul.rules li { display: flex; gap: .75rem; align-items: baseline; padding: .5rem 0;
     border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
   ul.rules li .text { flex: 1; }
@@ -139,8 +128,6 @@
     <a href="/collections" {{if eq .Nav "collections"}}aria-current="page"{{end}}>collections</a>
     <a href="/rules" {{if eq .Nav "rules"}}aria-current="page"{{end}}>rules</a>
     <a href="/log" {{if eq .Nav "log"}}aria-current="page"{{end}}>log</a>
-    <a href="/artifacts" {{if eq .Nav "artifacts"}}aria-current="page"{{end}}>artifacts</a>
-    <a href="/topics" {{if eq .Nav "topics"}}aria-current="page"{{end}}>topics</a>
     <a href="/admin" {{if eq .Nav "admin"}}aria-current="page"{{end}}>diagnostics</a>
   </nav>
 </header>

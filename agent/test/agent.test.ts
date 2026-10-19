@@ -15,7 +15,6 @@ import { Agent, describe, POINTER_BYTES } from "../src/agent.ts";
 import { type Collection, GoApi, type StoredEvent } from "../src/goapi.ts";
 import { newLogger } from "../src/log.ts";
 import { type Judge, judgePrompt, parseVerdicts } from "../src/lookback.ts";
-import { parseSpans, type Reviewer, reviewPrompt } from "../src/redaction.ts";
 import { handler } from "../src/server.ts";
 
 const ctx = BACKGROUND_CONTEXT;
@@ -61,11 +60,6 @@ class FakeGo {
 				// Events a test submitted straight to the agent aren't in the list; serve what it sent.
 				const e = this.events.find((x) => x.id === one[1]) ?? this.submitted.get(one[1]) ?? { ...sms(one[1], ""), seq: 0 };
 				return json(200, url.searchParams.has("offset") ? { ...e, payload: null, data: JSON.stringify(e.payload) } : e);
-			}
-			if (req.method === "GET" && url.pathname === "/api/unredacted") {
-				const redacted = new Set(this.appends.filter((a) => a.body.type === "redaction.created").map((a) => a.body.parent_id));
-				const all = new Set([...this.members.values()].flatMap((m) => [...m]));
-				return json(200, { events: [...all].filter((id) => !redacted.has(id)) });
 			}
 			if (req.method === "GET" && url.pathname === "/api/rules") {
 				return json(200, { rules: this.rules });
@@ -120,15 +114,13 @@ after(async () => {
 });
 
 let dbs = 0;
-function open(responses: Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0], opts: { judge?: Judge; db?: string; reviewer?: Reviewer } = {}) {
+function open(responses: Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0], opts: { judge?: Judge; db?: string } = {}) {
 	const faux = fauxProvider();
 	faux.setResponses(responses);
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const storagePath = join(dir, opts.db ?? `agent-${++dbs}.db`); // each test its own harness state
-	return Agent.open({ storagePath, models, model: { provider: "faux", modelId: "faux-1" }, api: new GoApi(go.url), lookBack: { judge: opts.judge, retryBaseMs: 20 },
-		// Redaction runs after every label; tests not about it get a reviewer that finds nothing.
-		redaction: { reviewer: opts.reviewer ?? (async () => []), retryBaseMs: 20 } }, ctx);
+	return Agent.open({ storagePath, models, model: { provider: "faux", modelId: "faux-1" }, api: new GoApi(go.url), lookBack: { judge: opts.judge, retryBaseMs: 20 } }, ctx);
 }
 
 test("steering, labeling, values, dedup and restart", async () => {
@@ -154,14 +146,12 @@ test("steering, labeling, values, dedup and restart", async () => {
 	const second = await agent.submit(OWNER, sms("E2", "weight 175"), ctx);
 	assert.equal((await second.wait(ctx)).status, "done");
 
-	// Redactions land asynchronously (their own test covers them).
-	const writes = () => go.appends.filter((a) => a.body.type !== "redaction.created");
-	assert.deepEqual(writes().map((a) => a.body.type), ["collection.started", "label.applied", "metric.observed"]);
-	for (const a of writes()) {
+	assert.deepEqual(go.appends.map((a) => a.body.type), ["collection.started", "label.applied", "metric.observed"]);
+	for (const a of go.appends) {
 		assert.equal(a.body.owner, OWNER);
 		assert.match(a.key ?? "", /^tool:/, "every write carries the tool task id as its idempotency key");
 	}
-	assert.equal(new Set(writes().map((a) => a.key)).size, 3, "keys differ per tool call");
+	assert.equal(new Set(go.appends.map((a) => a.key)).size, 3, "keys differ per tool call");
 	assert.equal(go.appends[0].body.parent_id, "E1");
 	assert.deepEqual(go.appends[2].body.payload, { collection_id: "01DERIVED1", value: 175 });
 	assert.match(seenPrompts[0], /No open collections/);
@@ -179,7 +169,7 @@ test("steering, labeling, values, dedup and restart", async () => {
 	assert.equal((await agent.conversationFor(OWNER, ctx)).id, conv.id, "same conversation after restart");
 	const afterRestart = await agent.submit(OWNER, sms("E2", "weight 175"), ctx);
 	assert.equal(String(afterRestart.id), String(second.id));
-	assert.equal(writes().length, 3);
+	assert.equal(go.appends.length, 3);
 	await agent.close(ctx);
 });
 
@@ -287,69 +277,8 @@ test("judge prompt and verdict parsing", () => {
 	assert.throws(() => parseVerdicts("no idea"), /no JSON array/);
 });
 
-test("every labeled event gets one redacted copy: scanner, then model review", async () => {
-	go.appends = [];
-	const msg = sms("R1", "deploy key AKIAIOSFODNN7EXAMPLE for Acme Corp, ask bob@acme.example");
-	go.submitted.set("R1", { ...msg, seq: 0 });
-	const reviewed: string[] = [];
-	const reviewer: Reviewer = async (chunk, rules) => {
-		reviewed.push(chunk);
-		assert.deepEqual(rules, go.rules.map((r) => r.text));
-		return [{ text: "Acme Corp", kind: "client" }];
-	};
-	const agent = await open([
-		fauxAssistantMessage([
-			fauxToolCall("label_event", { event_id: "R1", collection_id: "01DERIVED1", definition_version: 1, reason: "deploy" }),
-		], { stopReason: "toolUse" }),
-		fauxAssistantMessage([fauxText("filed")]),
-		// The same event labeled into a second collection: no second copy.
-		fauxAssistantMessage([
-			fauxToolCall("label_event", { event_id: "R1", collection_id: "01DERIVED2", definition_version: 1, reason: "also" }),
-		], { stopReason: "toolUse" }),
-		fauxAssistantMessage([fauxText("filed again")]),
-	], { reviewer });
-	await (await agent.submit(OWNER, msg, ctx)).wait(ctx);
-	for (let i = 0; i < 200 && !go.appends.some((a) => a.body.type === "redaction.created"); i++) await new Promise((r) => setTimeout(r, 10));
-	await (await agent.submit(OWNER, { ...msg, id: "R1-again" }, ctx)).wait(ctx);
-	await new Promise((r) => setTimeout(r, 200)); // give a duplicate redaction time to (not) appear
-	await agent.close(ctx);
-
-	// Only R1's: a previous test's background tasks may still land here.
-	const copies = go.appends.filter((a) => a.body.type === "redaction.created" && a.body.parent_id === "R1");
-	assert.equal(copies.length, 1, "one redacted copy per event");
-	const red = copies[0].body;
-	assert.equal(red.parent_id, "R1");
-	assert.equal(copies[0].key, "redact:R1");
-	assert.equal(red.payload.payload.Body, "deploy key [REDACTED:aws_access_key] for [REDACTED:client], ask [REDACTED:email]");
-	assert.deepEqual(red.payload.findings.map((f: { kind: string }) => f.kind).sort(), ["aws_access_key", "email", "model:client"]);
-	assert.equal(reviewed.length, 1);
-	assert.ok(!reviewed[0].includes("AKIA"), "the model never sees what the scanner caught");
-});
-
-test("the sweep redacts members that joined through their session, once each", async () => {
-	go.appends = [];
-	go.members.set("01SESSIONS", new Set(["S0", "S1"])); // Go added these; the agent never saw them
-	const agent = await open([fauxAssistantMessage([fauxText("noted")])]);
-	await (await agent.submit(OWNER, sms("SW1", "hi"), ctx)).wait(ctx); // the owner's conversation exists now
-	const copies = (id: string) => go.appends.filter((a) => a.body.type === "redaction.created" && a.body.parent_id === id).length;
-	assert.ok((await agent.sweep(ctx)) >= 2);
-	await agent.sweep(ctx); // before the tasks finish: the ledger stops a second start
-	for (let i = 0; i < 200 && !(copies("S0") && copies("S1")); i++) await new Promise((r) => setTimeout(r, 10));
-	assert.equal(await agent.sweep(ctx), 0, "nothing left to redact");
-	await new Promise((r) => setTimeout(r, 200));
-	await agent.close(ctx);
-	assert.equal(copies("S0"), 1);
-	assert.equal(copies("S1"), 1);
-	assert.equal(go.appends.filter((a) => a.body.type === "redaction.created").length, new Set(go.appends.map((a) => a.body.parent_id)).size, "one copy per event");
-});
-
-test("review prompt and span parsing", () => {
-	assert.match(reviewPrompt("some text", ["never name my employer"]), /- never name my employer/);
-	assert.deepEqual(parseSpans('[{"text":"Acme","kind":"client"},{"text":"  ","kind":"x"},{"kind":"y"}]'), [{ text: "Acme", kind: "client" }]);
-});
-
 test("large payloads become pointers", () => {
-	const big = { ...sms("E9", ""), type: "artifact.saved", payload: { title: "Postgres notes", html: "x".repeat(POINTER_BYTES) } };
+	const big = { ...sms("E9", ""), type: "note", payload: { title: "Postgres notes", html: "x".repeat(POINTER_BYTES) } };
 	const text = describe(big);
 	assert.match(text, /Payload is \d+ bytes, title "Postgres notes"\. Use read_event/);
 	assert.ok(!text.includes("xxxx"));

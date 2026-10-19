@@ -71,12 +71,6 @@ export class GoApi {
 		return body.events;
 	}
 
-	/** Ids of collection members with no redaction.created yet, oldest first. */
-	async unredacted(owner: string, limit = 100): Promise<string[]> {
-		const body = (await this.#request("GET", `/api/unredacted?${new URLSearchParams({ owner, limit: String(limit) })}`)) as { events: string[] };
-		return body.events;
-	}
-
 	/** Events derived from this one (payloads over 4 KB come back null). */
 	async children(id: string): Promise<StoredEvent[]> {
 		const body = (await this.#request("GET", `/api/events/${encodeURIComponent(id)}/children`)) as { events: StoredEvent[] };

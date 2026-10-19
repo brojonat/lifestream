@@ -13,7 +13,7 @@
   {{else}}{{.What}}{{end}}</li>
 {{end}}</ol>
 
-<h3>Members</h3>{{if eq .C.Kind "set"}}<p class="muted">Your order is the chapter order when this collection is sold as a book.</p>{{end}}
+<h3>Members</h3>
 {{if not .Members}}<p class="empty">No members yet.</p>
 {{else}}<table class="inbox">
 <thead><tr><th>When</th><th>Event</th><th>Why</th><th></th></tr></thead>
@@ -22,9 +22,7 @@
   <td class="when">{{.At | ago}}</td>
   <td class="text">{{trunc 200 .Text}}</td>
   <td class="became"><span class="muted">v{{.Version}}:</span> {{.Reason}}</td>
-  <td class="state">{{if eq $.C.Kind "set"}}<form class="move" data-on:submit="@post('/c/{{$.C.ID}}/move', {payload: {event_id: '{{.EventID}}', dir: evt.submitter.value}})">
-    <button class="quiet" type="submit" value="up" title="earlier">↑</button><button class="quiet" type="submit" value="down" title="later">↓</button></form>{{end}}
-    <form data-on:submit="@post('/c/{{$.C.ID}}/remove', {contentType: 'form'})">
+  <td class="state"><form data-on:submit="@post('/c/{{$.C.ID}}/remove', {contentType: 'form'})">
     <input type="hidden" name="event_id" value="{{.EventID}}">
     <button class="quiet" type="submit" title="remove from {{$.C.Name}}; the agent is told">remove</button></form></td>
 </tr>

@@ -211,11 +211,4 @@ func TestSessionsThroughTheAPI(t *testing.T) {
 	if code != 201 {
 		t.Fatalf("label: %d", code)
 	}
-	code, out = e.do("GET", "/api/unredacted?owner="+e.owner, "")
-	if got := out["events"].([]any); code != 200 || len(got) != len(msgs) || got[0] != msgs[0].ID {
-		t.Fatalf("unredacted: %d %v", code, out)
-	}
-	if code, _ = e.do("GET", "/api/unredacted", ""); code != 400 {
-		t.Fatalf("unredacted without owner: %d", code)
-	}
 }
