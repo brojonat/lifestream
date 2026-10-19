@@ -5,8 +5,9 @@ agent that receives every event and turns it into structured data (see
 [VISION.md](VISION.md)). Everything about selling the data was cut so it can
 come back later as explicit features, not as part of the agent.
 
-**Everything below is intact at commit `3697500`**, the last commit
-before the prune. To look at or bring back a piece:
+**Everything below is intact at commit `3697500`** (tag `pre-prune`), the
+last commit before the prune; the prune itself is `2b55e9d`. To look at or
+bring back a piece:
 
 ```
 git show 3697500:VISION.md                     # the old monetization-first spec

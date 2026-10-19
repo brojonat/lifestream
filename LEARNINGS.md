@@ -3,71 +3,6 @@
 Pitfalls found the hard way. Each entry: what happened, why it was
 surprising, how to avoid it.
 
-## Rex has no public docs a web search can find
-
-**What happened:** searching for rex (`rex server start --tailscale`, etc.)
-turned up only generic Tailscale pages. Everything VISION.md says about rex
-came from docs the user pasted in.
-
-**Why it's surprising:** it's a product we're building around, so you'd
-expect to look it up.
-
-**How to avoid:** don't guess rex behavior from search results. Use what
-VISION.md records (as of 2026-10-16) and ask the user for current docs.
-Known gotchas so far: hosts added with `rex hosts` don't appear in the Mac
-app, and plain HTTP needs `--allow-anonymous`, which must never be used for
-buyers.
-
-## A Sprite checkpoint can't start a new Sprite
-
-**What happened:** the first design built one "golden" environment and
-forked every buyer from its checkpoint. As far as we know, checkpoints only
-roll back the Sprite that made them.
-
-**Why it's surprising:** checkpoint/restore sounds like an image you can
-clone.
-
-**How to avoid:** build every buyer's Sprite from the recipe
-(`mise run setup`), then checkpoint it as that buyer's reset point.
-
-## Claude Code only runs Anthropic models
-
-**What happened:** the testing plan named one cheap model (`gpt-6-luna`)
-for every harness.
-
-**Why it's surprising:** Codex and pi take models from several providers,
-so it's easy to assume all three do.
-
-**How to avoid:** pick a model per harness. Claude Code needs an Anthropic
-model (Haiku 5.5 while testing).
-
-## OpenRouter's per-buyer keys need a separate management key
-
-**What happened:** OpenRouter can create keys with a USD spend limit
-(`limit`, with daily/weekly/monthly reset) through its key management API.
-
-**Why it's surprising:** the management key used to create them can't call
-models, and older docs call these "provisioning" keys.
-
-**How to avoid:** keep two kinds of key: one management key on the platform
-side, and per-buyer keys inside Sprites. Docs:
-https://openrouter.ai/docs/guides/overview/auth/management-api-keys
-
-## Stripe Checkout Sessions don't track stock
-
-**What happened:** paid topics can be capped to the first N subscribers.
-Stripe Payment Links can stop after N completed purchases
-(`restrictions.completed_sessions.limit`), but Checkout Sessions, which we
-create ourselves to pre-apply the 100%-off coupon, have no inventory at all.
-
-**Why it's surprising:** Payment Links are built on Checkout, so you'd
-expect the limit to carry over.
-
-**How to avoid:** own the stock count. Reserve a slot when creating the
-session, give the session an expiry, and release the slot when it expires
-unpaid, so the last slot can't sell twice. Docs:
-https://docs.stripe.com/docs/payment-links/customize
-
 ## pi's npm scope was renamed
 
 **What happened:** pi's packages moved from `@mariozechner/*` to
@@ -168,15 +103,16 @@ input that ends with containers still open. One corpus
 
 ## html/template treats `data-on:*` attributes as JavaScript
 
-**What happened:** a topic name goes inside
+**What happened:** a topic name (since pruned) went inside
 `data-on:submit="confirm('… {{.Name}}?') && @post(…)"`. html/template
 strips the `data-` prefix, sees `on…`, and escapes the value for a JS
 string (`'` becomes `\u0027`).
 
 **Why it's surprising:** you'd expect `data-*` to be plain attributes.
 
-**How to avoid:** rely on it, and keep a test that a quote in user text
-can't break out (`TestTopicNameIsEscapedInsideTheConfirm`).
+**How to avoid:** rely on it, and when user text goes inside a `data-on:*`
+attribute, add a test that a quote can't break out. The original,
+`TestTopicNameIsEscapedInsideTheConfirm`, is at tag `pre-prune`.
 
 ## New projections start empty on a database that already has events
 
@@ -190,20 +126,26 @@ run `lifestream rebuild`.
 ## Members added by a projection never pass through the agent
 
 **What happened:** session messages join their session's collections in
-Go, with no model call, so no tool call ever started their redaction.
+Go, with no model call, so no tool call ever started the (since pruned)
+redaction of those members.
 
-**How to avoid:** the agent sweeps `GET /api/unredacted` on a timer, and
-every redaction task starts through a per-conversation ledger so the tool
-path, the look-back and the sweep never start two for one event.
+**How to avoid:** per-member agent work can't hang off `label_event`
+alone. Sweep for members missing the work on a timer, and start each task
+through a ledger so the tool path, the look-back and the sweep never start
+two for one event. The redaction sweep at tag `pre-prune` is the worked
+example.
 
 ## Every non-agent event is dispatched unless excluded
 
 **What happened:** topic, notification and ordering events from the
 dashboard went to the agent like SMS, each costing a model call and
-showing up in the inbox.
+showing up in the inbox. The fix, a `notForAgent` map, went with those
+types in the prune; today every event not written by the agent is
+dispatched.
 
-**How to avoid:** add types the agent has no part in to `notForAgent` in
-`internal/store/events.go`.
+**How to avoid:** when you add an event type the agent has no part in,
+give `Append` in `internal/store/events.go` a way to skip it (the old map
+is at tag `pre-prune`).
 
 ## Pi Durable: task ids, faulting phases, background reports
 
@@ -234,18 +176,6 @@ index shifts and would collide `(session_id, sequence)` keys.
 
 **How to avoid:** the hook provider keeps its own counter and one session
 id per provider.
-
-## claude.ai can share an artifact with specific people
-
-**What happened:** (TODO A4) the owner can invite people by email; they
-open it signed in to Claude with that address. On Pro and Max the share
-options are "Only you" or "Anyone with the link", plus invites. Team and
-Enterprise can limit sharing to the organization; Enterprise has invites
-outside the organization off by default. No API for invites was found.
-
-**How to avoid:** link delivery can be enforced by inviting the buyer's
-checkout email, by hand for now. Docs:
-https://support.claude.com/en/articles/9547008-share-artifacts
 
 ## Inherited from the go-local-app template
 
@@ -307,3 +237,37 @@ treated as another event name. Always emit an object:
 `{contentType: 'form'}` the FormData is built inside the action's async
 flow, so `el.reset()` right after can empty it first. `{payload: {...}}` is
 evaluated synchronously. Pair it with `data-ignore-morph` on inputs.
+
+## Pi Durable loads nothing implicitly
+
+**What happened:** pi the coding agent reads `.pi/` and `AGENTS.md` from
+its working directory. Pi Durable is only the harness under it: a
+conversation gets exactly the model, instructions, extensions and tools
+passed in code (Hugging Face's walkthrough, 2026-10-19).
+
+**Why it's surprising:** it's "pi", so you'd expect pi's project files to
+apply.
+
+**How to avoid:** everything the agent should know goes in an extension
+section or the rules doc (`agent/src/collections.ts`, `rules.ts`). A
+markdown file in the repo does not reach it.
+
+## Features threaded through later commits don't revert cleanly
+
+**What happened:** pruning topics, artifacts and chapter order was one
+`git revert --no-commit` of their commits, with no conflicts. Redaction had
+been wired into the label tool, the look-back and session handling by
+later commits, so it had to come out by hand across nine files.
+
+**How to avoid:** land a feature in its own commits and files, and reach
+it through one seam (an extension, a route, an event type) so it can be
+cut with a revert. Record anything you cut in PRUNED.md.
+
+## The `pre-prune` tag shows up in build versions
+
+**What happened:** `mise run build` stamps `git describe --tags --always`,
+so after tagging `pre-prune` the version reads `pre-prune-N-g<sha>`
+instead of a bare commit hash.
+
+**How to avoid:** expect it, or tag a real version (`v0.1.0`) when phase 1
+ships so describe uses that.

@@ -4,6 +4,36 @@ All notable changes to this project are recorded here, newest first. The
 format follows [Keep a Changelog](https://keepachangelog.com/). Entries are
 grouped by date; nothing is versioned yet.
 
+## 2026-10-19
+
+### Changed
+
+- Refocused: the agent is a data handler first. It receives every event
+  and turns it into structured data or leaves it stored; it never sells,
+  publishes or sends. VISION.md rewritten to match (the old
+  monetization-first spec is at tag `pre-prune`).
+- TODO.md: "Next up" is texting the real Twilio number and watching the
+  real agent file it (33a–g), local behind a tunnel first, then deploy.
+
+### Removed
+
+- Paid-notification topics: events, projections, `/topics` page and their
+  migration. (Reverts fb9a1e0, eca121e, 2260616.)
+- Artifacts: `artifact.saved` validation and the `/artifacts` page.
+  (Reverts 7bdbd99.)
+- Chapter order: `collection.ordered`, `POST /c/{id}/move` and its
+  migration. (Reverts da568d8.)
+- Redaction: the agent's redaction task and TypeScript scanner, the sweep
+  and `SWEEP_SECONDS`, `GET /api/unredacted`, the inbox's "redacted copy".
+  Capture's Go and Python scanners stay.
+- TODO tracks for rex environments, artifact textbooks and paid
+  notifications, and the learnings that only served them.
+
+### Added
+
+- PRUNED.md: what was cut, the commits that built it, and how to bring it
+  back. Tag `pre-prune` marks the last commit before the prune (3697500).
+
 ## 2026-10-17
 
 ### Changed

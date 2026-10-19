@@ -5,14 +5,17 @@ A personal event store with an agent that files what you send it. Text
 collection, extracts the value, and a live dashboard charts it with a weekly
 average. The spreadsheet goes away.
 
-This is **phase 1** (the personal tracker). The product it grows into, and
-every design decision behind it, is in [VISION.md](VISION.md). Work in
-flight is in [TODO.md](TODO.md); pitfalls are in [LEARNINGS.md](LEARNINGS.md).
+The agent is a data handler first: it receives every event and turns it
+into structured data, or leaves it stored for later. It never sells,
+publishes or texts back. The design is in [VISION.md](VISION.md), work in
+flight in [TODO.md](TODO.md), pitfalls in [LEARNINGS.md](LEARNINGS.md).
 "Lifestream" is a placeholder name.
 
-**Status (2026-10-17): parked.** The Sprite environments product moves to
-a new project; this repo is kept as a parts bin. See the note at the top
-of [TODO.md](TODO.md).
+**Status (2026-10-19): refocused.** Monetization features (paid topics,
+artifacts, chapter order, redaction) were pruned; [PRUNED.md](PRUNED.md)
+says what they were and where they live in git (tag `pre-prune`). Next
+step: text the Twilio number for real and watch the agent file it
+(TODO 33).
 
 ## How it fits together
 
@@ -57,8 +60,6 @@ lifestream users add --name me --phone +15555550100
 lifestream users ls              # JSONL
 echo '{"type":"note","payload":{"text":"hi"}}' | lifestream push
                                  # POST JSON events from stdin to $LIFESTREAM_URL
-jq -n --rawfile html notes.html '{type:"artifact.saved",payload:{title:"Postgres notes",html:$html}}' | lifestream push
-                                 # save an artifact from the shell
 lifestream capture claude-code < hook.json
                                  # from a harness hook: send the transcript's new lines (claude-code, pi, codex)
 lifestream sessions ls           # captured sessions as JSONL, most recently active first
@@ -80,14 +81,9 @@ Public listener (`--addr`, what the ingress exposes):
 | `GET /` | Metrics: per metric collection, latest / 7-day average / change vs the week before, and a chart of readings with a trailing 7-day average (live over SSE) |
 | `GET /inbox` | The last 50 raw events and what each became (labels, values, flags); flagged ones highlighted. Of a session, only the head the agent saw |
 | `GET /collections`, `GET /c/{id}` | Collections; one collection's definition history (each version) and members |
-| `POST /c/{id}/move` | `event_id`, `dir` (up or down): reorder a set collection's members, which is a book's chapter order. Appends `collection.ordered` with the whole order. Members left out follow, newest first |
 | `POST /c/{id}/remove`, `POST /inbox/add` | Owner corrections: append `label.corrected` (source `dashboard`), which goes to the agent like any raw event |
 | `GET /log`, `POST /log/{id}/undo` | Rule log: every `collection.*` change, with one-click undo (appends the inverse: stop, resume, or `collection.amended {remove_rule}` / re-add) |
 | `POST /review/{id}/answer` | Answer a `review.flagged` question (queue at the top of the inbox); appends `review.answered`, which goes to the agent |
-| `GET /artifacts`, `POST /artifacts` | Saved Claude artifacts. Post a multipart upload (`title`, `html` file, up to 16 MB) or a claude.ai link (`title`, `url`; https on claude.ai only). Appends `artifact.saved`. The HTML is stored, never rendered on the dashboard's origin |
-| `GET /topics`, `POST /topics` | Paid-notification topics: name, one-time or monthly, price in dollars (blank is free). Lists each topic's current subscribers |
-| `POST /topics/{id}/history` | `from` (YYYY-MM-DD): how far back new subscribers can read; empty means from when they subscribe |
-| `POST /topics/{id}/send` | `text` (sent as JSON when it's a JSON object or array) and `confirm`, the subscriber count you were shown. 409 if the count changed since. Appends `notification.sent`. The agent can never send one |
 | `GET /rules`, `POST /rules`, `POST /rules/{id}/remove` | The rules doc: the owner's standing instructions (`rule.added` / `rule.removed`), which the agent reads before every event |
 | `GET /admin` | Process diagnostics |
 | `GET /healthz` | `ok` |
@@ -106,15 +102,14 @@ side of the contract):
 | `GET /api/collections/{id}/members` | Members, each with the definition version it was labeled under |
 | `GET /api/rules?owner=` | The rules doc |
 | `GET /api/events?owner=&since=&after=&limit=&max_payload=&dispatched=` | Events in log order; payloads over `max_payload` bytes (default 4096) are elided, with `payload_size`. `dispatched=1` keeps only what the dispatcher sends the agent (raw events minus session tails); the look-back uses it |
-| `GET /api/unredacted?owner=&limit=` | Ids of collection members with no `redaction.created` yet, oldest first; the agent's redaction sweep reads it |
 | `GET /api/events/{id}/children` | Events derived from it |
 | `GET /api/events/{id}` | One event; `?offset=&limit=` returns a byte range of a large payload as `data` |
 | `POST /api/events` | Append a derived event `{owner, type, parent_id?, payload}`. `Idempotency-Key` header = the Pi Durable tool *task* id (`api.taskId`; provider tool-call ids aren't unique). 201 new, 200 replay, 422 when it contradicts current state (unknown collection, closed collection, bad version). |
 | `GET /healthz` | `ok` |
 
 The agent may append `collection.started|amended|stopped|resumed`,
-`label.applied`, `label.removed`, `metric.observed`, `rule.added`, `review.flagged` and
-`redaction.created`. Payload shapes are the structs in
+`label.applied`, `label.removed`, `metric.observed`, `rule.added` and
+`review.flagged`. Payload shapes are the structs in
 `internal/store/projections.go`; a collection's id is the id of its
 `collection.started` event.
 
@@ -134,8 +129,6 @@ is the harness's own JSON, unchanged. A session is the events sharing a
 - Removing one message (`label.removed`, or the owner's
   `label.corrected` remove) takes the whole session out, and later
   messages stop joining. An owner's add puts it back.
-- Members that joined this way never pass through the agent; its
-  redaction sweep gives them their redacted copy.
 - Every message is also read into one common format, whatever the
   harness (`internal/transcript`): `{role, parts}`. Roles are user,
   assistant, tool and system. Parts are text, tool_call (with name,
@@ -156,8 +149,8 @@ model, `cwd`, and the git remote (credentials stripped), branch and commit.
 If the service is unreachable it warns on stderr and exits 0, and the next
 turn sends the backlog. It never prints to stdout, which hooks read.
 
-Before sending, the deterministic secret scanner (`internal/scan`, the Go
-twin of the agent's, same corpus) masks keys, tokens, private keys,
+Before sending, the deterministic secret scanner (`internal/scan`, same
+corpus as the Strands adapter's) masks keys, tokens, private keys,
 connection passwords, emails and phone numbers in every string of the
 message, keeping keys and key order. Those secrets never reach the server.
 The payload says `"scanned": true` and lists `findings`.
@@ -244,7 +237,6 @@ Node ≥ 22.19 (mise pins 25), no build step: `node src/main.ts`. Pi Durable
 | `DATA_DIR` | Where `agent.db` lives (default `~/.lifestream`) |
 | `AGENT_MODEL` | `provider/modelId` (default `anthropic/claude-haiku-4-5-20251001`); stored per conversation when it is created |
 | `ANTHROPIC_API_KEY` | Read by the Anthropic provider |
-| `SWEEP_SECONDS` | How often the redaction sweep runs (default 30) |
 
 One conversation per owner. Each event is submitted with its id as
 `requestId` (dedup survives restarts); SMS and dashboard events use
@@ -258,17 +250,8 @@ task (`lifestream.lookback`) that labels the last 7 days (`lookback_days`
 overrides; 0 skips) in batches of 20, one model call per batch,
 checkpointing as it goes and retrying with backoff before giving up. An
 exclude re-checks current members and emits `label.removed`.
-Every labeled event also gets one redacted copy (`redaction.created`,
-parent = the event) from a background task (`lifestream.redact`): the
-deterministic scanner (`agent/src/scanner.ts`; corpus in
-`testdata/secrets.json`) masks keys, tokens, private keys, connection
-passwords, emails and phone numbers, then the model reviews what's left in
-12 KB chunks (up to 10) against the rules doc. The model never sees what
-the scanner caught. Every redaction starts through a per-conversation
-ledger, so one event never gets two tasks; a sweep every `SWEEP_SECONDS`
-starts tasks for members Go added without the agent (session messages).
-Payloads over 4 KB reach the conversation as pointers. Tests use pi-ai's faux provider;
-`test/e2e.test.ts` drives the real Go binary.
+Payloads over 4 KB reach the conversation as pointers. Tests use pi-ai's
+faux provider; `test/e2e.test.ts` drives the real Go binary.
 
 ## Deploy
 
@@ -302,14 +285,14 @@ internal/api/        the agent's internal API
 internal/dispatch/   delivers raw events to the agent
 internal/capture/    the transcript tailer behind `lifestream capture`, one parser per harness
 internal/transcript/ each harness's message JSON -> the common format (pure functions)
-internal/scan/       the deterministic secret scanner (twin of agent/src/scanner.ts and capture/strands' scan.py)
+internal/scan/       the deterministic secret scanner (twin of capture/strands' scan.py)
 internal/bus/        embedded NATS (in-process), backs the diagnostics samples
 internal/metrics/    process metrics, /metrics
 internal/web/        dashboard handlers, templates, assets/components.js (d3 + Rocket)
 agent/src/           the Pi Durable agent: main, agent (harness, per-owner conversations),
                      collections (extension: tools + sections), goapi, server
-agent/test/          faux-model tests, scanner tests, and the end-to-end test
-testdata/secrets.json  fake secrets shared by every scanner (TypeScript, Go, Python)
+agent/test/          faux-model tests, the pi capture test, and the end-to-end test
+testdata/secrets.json  fake secrets shared by both scanners (Go, Python)
 testdata/claude-code/  a synthetic Claude Code transcript and hook inputs
 testdata/pi/           a synthetic pi session file
 testdata/codex/        a synthetic Codex rollout and notify payload
