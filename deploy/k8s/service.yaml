@@ -1,13 +1,7 @@
-# The Tailscale operator also exposes this Service on the tailnet as
-# http://lifestream, which is how the dashboard is reached until login lands
-# (TODO 24). The public Ingress still routes only the ingest paths.
 apiVersion: v1
 kind: Service
 metadata:
   name: lifestream
-  annotations:
-    tailscale.com/expose: "true"
-    tailscale.com/hostname: lifestream
 spec:
   selector:
     app: lifestream

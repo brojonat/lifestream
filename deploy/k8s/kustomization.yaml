@@ -1,6 +1,9 @@
 # Rendered by deploy/deploy.sh, which fills {{DOCKER_REPO}}, {{TAG}} and
 # {{HOST}}. Secrets live in the lifestream-env Secret, created by hand:
 #   kubectl -n lifestream create secret generic lifestream-env --from-env-file=.env.prod
+# and the dashboard's basic auth (dashboard.yaml):
+#   printf '%s:%s\n' "$DASHBOARD_USER" "$(openssl passwd -apr1 "$DASHBOARD_PASSWORD")" |
+#     kubectl -n lifestream create secret generic lifestream-dashboard-auth --from-file=users=/dev/stdin
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: lifestream
@@ -10,6 +13,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - ingress.yaml
+  - dashboard.yaml
 configMapGenerator:
   - name: litestream
     files:

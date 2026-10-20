@@ -1,0 +1,37 @@
+# The dashboard on the public host, behind Traefik basic auth until login
+# lands (D1, TODO 24). Credentials are htpasswd lines in the
+# lifestream-dashboard-auth Secret, created by hand (see kustomization.yaml).
+# The ingest routes stay on ingress.yaml without auth: Twilio signs its
+# requests and /events takes a bearer token. Traefik prefers the longer
+# rule, so those exact paths win over this prefix.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: dashboard-auth
+spec:
+  basicAuth:
+    realm: lifestream
+    removeHeader: true
+    secret: lifestream-dashboard-auth
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lifestream-dashboard
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.middlewares: lifestream-dashboard-auth@kubernetescrd
+spec:
+  ingressClassName: traefik
+  # Same certificate as ingress.yaml, which owns it (the cert-manager
+  # annotation lives there only, so there's one Certificate).
+  tls:
+    - hosts: ["{{HOST}}"]
+      secretName: lifestream-tls
+  rules:
+    - host: "{{HOST}}"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: lifestream, port: { name: http } } }

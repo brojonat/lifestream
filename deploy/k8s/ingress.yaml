@@ -1,6 +1,6 @@
-# Only the ingest routes are public. The dashboard has no login yet
-# (TODO 24); reach it on the tailnet at http://lifestream (service.yaml),
-# and add "/" here once login lands.
+# The ingest routes, public and without basic auth: Twilio signs its
+# requests and /events takes a bearer token. The dashboard is
+# dashboard.yaml, behind basic auth until login lands (TODO 24).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
