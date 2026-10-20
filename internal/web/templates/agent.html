@@ -1,0 +1,27 @@
+{{define "region"}}<main id="agent">
+{{with .Snap}}
+<section class="conv">{{template "conv" .Main}}</section>
+{{range .Lookbacks}}<section class="conv sub">
+  <h3>Look-back <span class="muted">task {{.TaskID}} · {{.Phase}}</span></h3>
+  {{with .Child}}{{template "conv" .}}{{else}}<p class="muted">starting…</p>{{end}}
+</section>
+{{end}}
+<p class="muted">updated <local-time datetime="{{utc .At}}">{{.At.Format "15:04:05"}} UTC</local-time></p>
+{{else}}<p class="empty">{{.Problem}}</p>{{end}}
+</main>
+{{end}}
+
+{{define "conv"}}<div class="row">
+  <span class="status {{if .Busy}}busy{{end}}">{{if .Busy}}● working{{else}}idle{{end}}</span>
+  <span class="muted">{{if .Queued}}{{.Queued}} queued · {{end}}{{usd .CostUSD}} spent</span>
+</div>
+{{with .Handling}}<h3>On</h3><div class="text handling">{{.}}</div>{{end}}
+{{with .Retry}}<p class="warn">Retrying: {{.}}</p>{{end}}
+{{with .Thinking}}<details><summary>thinking</summary><pre class="thinking">{{.}}</pre></details>{{end}}
+{{with .Script}}<h3>{{if $.Busy}}Script{{else}}Last script{{end}}</h3><pre class="script">{{.}}</pre>{{end}}
+{{if .Calls}}<ol class="calls">{{range .Calls}}<li class="{{.Status}}"><code>{{.Name}}</code> <span class="args">{{.Args}}</span>
+  {{if .Ms}}<span class="muted">{{.Ms}} ms</span>{{end}}{{if eq .Status "running"}} <span class="muted">running</span>{{end}}{{with .Error}}<div>{{.}}</div>{{end}}</li>{{end}}</ol>{{end}}
+{{with .Output}}<pre class="thinking">{{.}}</pre>{{end}}
+{{with .Text}}<div class="text">{{.}}</div>{{end}}
+{{if not .Busy}}{{with .Last}}<h3>Last reply</h3><div class="text">{{.}}</div>{{end}}{{end}}
+{{end}}

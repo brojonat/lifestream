@@ -16,6 +16,7 @@ import { Agent, describe, POINTER_BYTES } from "../src/agent.ts";
 import { type Collection, GoApi, type QueryResult, type StoredEvent } from "../src/goapi.ts";
 import { newLogger } from "../src/log.ts";
 import { lookBackJob } from "../src/lookback.ts";
+import { type LiveSource, type Snapshot, watchOwner } from "../src/live.ts";
 import { handler } from "../src/server.ts";
 
 const ctx = BACKGROUND_CONTEXT;
@@ -26,6 +27,7 @@ class FakeGo {
 	appends: { body: { owner: string; type: string; parent_id?: string; payload: any }; key: string | undefined }[] = [];
 	queries: { sql: string; params: unknown[] }[] = [];
 	answer: (sql: string) => QueryResult = () => ({ columns: [], rows: [], truncated: false });
+	hold?: Promise<void>; // when set, queries wait for it (a slow query, for the live panel)
 	collections: Collection[] = [];
 	rules: { id: string; text: string; source: string }[] = [];
 	events: (StoredEvent & { seq: number })[] = []; // raw events the look-back can find
@@ -52,6 +54,7 @@ class FakeGo {
 				const q = JSON.parse(await read(req));
 				if (/^\s*(delete|update|insert)/i.test(q.sql)) return json(400, { error: "query: attempt to write a readonly database" });
 				this.queries.push({ sql: q.sql, params: q.params });
+				await this.hold;
 				return json(200, this.answer(q.sql));
 			}
 			if (req.method === "GET" && url.pathname === "/api/events") {
@@ -347,6 +350,101 @@ test("large payloads become pointers", () => {
 	assert.match(text, /Payload is \d+ bytes, title "Postgres notes"\. Query it to read it\./);
 	assert.ok(!text.includes("xxxx"));
 	assert.match(describe(sms("E1", "weight 175")), /"Body":"weight 175"/);
+});
+
+test("GET /live streams what the agent is doing: the event, the script, its calls", async () => {
+	let release!: () => void;
+	go.hold = new Promise<void>((r) => (release = r));
+	go.answer = () => ({ columns: ["n"], rows: [[3]], truncated: false });
+	const agent = await open([
+		script(`const r = await tools.query({ sql: "SELECT count(*) AS n FROM events" }); text("count " + r.rows[0][0]);`),
+		fauxAssistantMessage([fauxText("counted 3 events")]),
+	]);
+	const quiet = newLogger({ LOG_LEVEL: "error" }, { write: () => true });
+	const srv = createServer(handler(agent, quiet, ctx));
+	await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+	const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+	const abort = new AbortController();
+	try {
+		assert.equal((await fetch(`${base}/live`)).status, 400, "owner is required");
+		const res = await fetch(`${base}/live?owner=${OWNER}`, { signal: abort.signal });
+		assert.equal(res.headers.get("content-type"), "text/event-stream");
+		const reader = res.body!.getReader();
+		let buf = "";
+		/** Reads snapshots until one passes `want`. */
+		const next = async (want: (s: Snapshot) => boolean) => {
+			for (;;) {
+				const i = buf.indexOf("\n\n");
+				if (i >= 0) {
+					const s = JSON.parse(buf.slice(0, i).replace(/^data: /, "")) as Snapshot;
+					buf = buf.slice(i + 2);
+					if (want(s)) return s;
+					continue;
+				}
+				const { value, done } = await reader.read();
+				if (done) throw new Error("stream ended");
+				buf += new TextDecoder().decode(value);
+			}
+		};
+		assert.equal((await next(() => true)).main.busy, false, "the first snapshot comes at once");
+
+		await agent.submit(OWNER, sms("E11", "how many events?"), ctx);
+		const working = await next((s) => s.main.calls.some((c) => c.name === "query"));
+		assert.equal(working.main.busy, true);
+		assert.match(working.main.handling ?? "", /how many events\?/);
+		assert.match(working.main.script ?? "", /tools\.query/);
+		assert.deepEqual(working.main.calls.map((c) => [c.name, c.status]), [["query", "running"]]);
+		assert.match(working.main.calls[0].args, /SELECT count/);
+
+		release();
+		const idle = await next((s) => !s.main.busy && s.main.last === "counted 3 events");
+		assert.match(idle.main.script ?? "", /tools\.query/, "the last script stays on the panel");
+		assert.deepEqual(idle.main.calls.map((c) => [c.name, c.status]), [["query", "done"]], "finished calls come from the script's result");
+		assert.match(idle.main.output ?? "", /^Script completed\n.*\ncount 3$/s);
+		assert.equal(typeof idle.main.cost_usd, "number");
+	} finally {
+		go.hold = undefined;
+		abort.abort();
+		srv.close();
+		await (await agent.conversationFor(OWNER, ctx)).waitForIdle(ctx);
+		await agent.close(ctx);
+	}
+});
+
+test("look-back subagents appear in the live snapshot and leave with their task", async () => {
+	// A fake source: states whose value tests set and whose subscribers they wake.
+	const state = <T,>(value: T) => {
+		const subs = new Set<() => void>();
+		return { value, subscribe: (f: () => void) => (subs.add(f), () => subs.delete(f)), dispose() {}, wake: () => subs.forEach((f) => f()) };
+	};
+	const view = (id: number, docs: Record<string, unknown>, model: unknown[] = []) =>
+		({ conversation: { id }, entries: [{ model }], docs }) as never;
+	const main = state(view(1, {}));
+	const child = state(view(2, { "pi.live": { run: { taskId: 9, inputs: [] } } }, [{ role: "user", content: "Look-back job (from the system, not an event). ..." }]));
+	const graph = state({ tasks: {} as Record<string, unknown> });
+	const src = {
+		conversationId: async () => 1,
+		viewState: async (id: unknown) => (Number(id) === 1 ? main : child),
+		taskGraph: async () => graph,
+	} as unknown as LiveSource;
+	const seen: Snapshot[] = [];
+	const stop = await watchOwner(src, OWNER, ctx, (s) => seen.push(s), 1);
+	const settle = () => new Promise((r) => setTimeout(r, 20));
+	assert.deepEqual(seen.at(-1)!.lookbacks, []);
+
+	graph.value = { tasks: { "9": { id: 9, kind: "lifestream.lookback", conversationId: 1, background: true, abortRequested: false, state: { status: "running", phase: "run" }, conversations: [2] } } };
+	graph.wake();
+	await settle();
+	const lb = seen.at(-1)!.lookbacks;
+	assert.deepEqual(lb.map((l) => [l.task_id, l.kind, l.phase]), [["9", "lifestream.lookback", "run"]]);
+	assert.equal(lb[0].child?.busy, true);
+	assert.match(lb[0].child?.handling ?? "", /^Look-back job/);
+
+	graph.value = { tasks: {} };
+	graph.wake();
+	await settle();
+	assert.deepEqual(seen.at(-1)!.lookbacks, []);
+	stop();
 });
 
 test("POST /submit validates and admits", async () => {

@@ -42,6 +42,12 @@ type Deps struct {
 	JS            jetstream.JetStream
 	DataDir       string
 	Interval      time.Duration
+
+	// The live agent panel: where the agent's /live feed is, and the client
+	// that reads it (no timeout; the feed is a stream). Leave AgentURL empty
+	// to show the panel as unconfigured.
+	AgentURL    string
+	AgentClient *http.Client
 }
 
 // changes wakes a stream. Next must be called before rendering, so a change
@@ -89,7 +95,10 @@ type Server struct {
 // NewHandler wires the routes.
 func NewHandler(d Deps) http.Handler {
 	s := &Server{Deps: d, pages: map[string]*template.Template{}}
-	for _, name := range []string{"metrics", "inbox", "collections", "collection", "rules", "log", "admin"} {
+	if s.AgentClient == nil {
+		s.AgentClient = &http.Client{}
+	}
+	for _, name := range []string{"metrics", "inbox", "collections", "collection", "rules", "log", "admin", "agent"} {
 		s.pages[name] = template.Must(template.New("").Funcs(funcs).ParseFS(files,
 			"templates/layout.html", "templates/"+name+".html"))
 	}
@@ -117,6 +126,8 @@ func NewHandler(d Deps) http.Handler {
 	mux.HandleFunc("GET /rules/stream", s.stream("rules", s.rulesView, s.storeWatch))
 	mux.HandleFunc("POST /rules", s.addRule)
 	mux.HandleFunc("POST /rules/{id}/remove", s.removeRule)
+	mux.HandleFunc("GET /agent", s.page("agent", s.agentView))
+	mux.HandleFunc("GET /agent/stream", s.agentStream)
 	if s.Collector != nil {
 		mux.HandleFunc("GET /admin", s.page("admin", s.adminView))
 		mux.HandleFunc("GET /admin/stream", s.stream("admin", s.adminView, s.metricsWatch))
@@ -133,6 +144,12 @@ var funcs = template.FuncMap{
 	// utc is a time for <local-time datetime=…>, which the browser shows in
 	// the viewer's timezone.
 	"utc": func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
+	"usd": func(v float64) string {
+		if v < 0.01 {
+			return fmt.Sprintf("$%.4f", v)
+		}
+		return fmt.Sprintf("$%.2f", v)
+	},
 	"trunc": func(n int, s string) string {
 		if len(s) > n {
 			return s[:n] + "…"

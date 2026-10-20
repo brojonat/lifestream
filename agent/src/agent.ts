@@ -92,6 +92,22 @@ export class Agent {
 		return conv;
 	}
 
+	// The live panel's reads (live.ts): a conversation's view and the task
+	// graph, as disposable states that publish every commit.
+	async conversationId(owner: string, ctx: Context): Promise<ConversationId> {
+		return (await this.conversationFor(owner, ctx)).id;
+	}
+
+	async viewState(id: ConversationId, ctx: Context) {
+		const conv = await this.#harness.conversation(id, ctx);
+		if (!conv) throw new Error(`conversation ${id} vanished`);
+		return conv.viewState(ctx);
+	}
+
+	taskGraph(ctx: Context) {
+		return this.#harness.taskGraph(ctx);
+	}
+
 	/** Admit one event. Returns once it is durably queued, not when the model is done. */
 	async submit(owner: string, event: StoredEvent, ctx: Context) {
 		const conv = await this.conversationFor(owner, ctx);

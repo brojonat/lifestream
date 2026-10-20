@@ -4,6 +4,18 @@ All notable changes to this project are recorded here, newest first. The
 format follows [Keep a Changelog](https://keepachangelog.com/). Entries are
 grouped by date; nothing is versioned yet.
 
+## 2026-10-20, evening: the live agent panel
+
+### Added
+
+- `/agent`: what the agent is doing right now, live. Working or idle, the
+  event it's on, streamed thinking and text, the script it's running or ran
+  last with each call (status, timing, errors) and its output, queued
+  inputs, spend, and look-back subagents nested under it. The agent
+  publishes snapshots on `GET /live?owner=` (SSE, from Pi Durable's
+  `viewState()` and `taskGraph()`); Go relays them, reconnecting when the
+  agent restarts. TODO 35 done.
+
 ## 2026-10-20, later: the agent becomes a steward
 
 ### Added

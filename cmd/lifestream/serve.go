@@ -124,6 +124,7 @@ func runServe(ctx context.Context, cmd *cli.Command) error {
 	mux.Handle("/", web.NewHandler(web.Deps{
 		App: "Lifestream", Events: st, Log: log,
 		Collector: collector, MetricsKV: mkv, MetricsStream: mstream, JS: b.JS(), DataDir: dataDir, Interval: interval,
+		AgentURL: cmd.String("agent-url"), AgentClient: &http.Client{},
 	}))
 	servers := []*http.Server{newServer(ctx, mux), newServer(ctx, api.NewHandler(st, log))}
 	apiAddr := cmd.String("api-addr")

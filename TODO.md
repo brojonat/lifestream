@@ -126,7 +126,7 @@ about a cent per text.
 - [x] 29. Rules doc editor for the `rules` extension. (after: 22)
 - [x] 30. Font size 16px on all inputs (iOS zoom), works at phone width.
 - [x] 30a. Times in the viewer's timezone (`<local-time>`, chart in local time); the inbox shows what a correction changed. (2026-10-20)
-- [ ] 35. Live agent panel: what the agent is doing right now (the event it's on, streamed thinking/text, the script it's running and its nested calls, running look-back subagents, queued inputs) and running model cost. Pi Durable's `conversation.watch()` (or the experimental `watchEvents()`) on the agent, streamed over a new endpoint on its loopback API; Go relays it to the dashboard's SSE stream, since only Go is reachable. Cost from the view's `docs["pi.usage"]`. See the pi-durable README "Watching a Conversation" and "Agent Events". (after: 25)
+- [x] 35. Live agent panel (`/agent`, 2026-10-20): what the agent is doing right now (the event it's on, streamed thinking/text, the script it's running and its nested calls, running look-back subagents, queued inputs) and running model cost. Pi Durable's `conversation.watch()` (or the experimental `watchEvents()`) on the agent, streamed over a new endpoint on its loopback API; Go relays it to the dashboard's SSE stream, since only Go is reachable. Cost from the view's `docs["pi.usage"]`. See the pi-durable README "Watching a Conversation" and "Agent Events". (after: 25)
 
 ## Production basics
 

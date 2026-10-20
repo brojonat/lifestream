@@ -101,6 +101,7 @@ Public listener (`--addr`):
 | `GET /log`, `POST /log/{id}/undo` | Rule log: every `collection.*` change, with one-click undo (appends the inverse: stop, resume, or `collection.amended {remove_rule}` / re-add) |
 | `POST /review/{id}/answer` | Answer a `review.flagged` question (queue at the top of the inbox); appends `review.answered`, which goes to the agent. The agent can withdraw a question (`review.withdrawn`) |
 | `GET /rules`, `POST /rules`, `POST /rules/{id}/remove` | The rules doc: the owner's standing instructions (`rule.added` / `rule.removed`), which the agent reads before every event |
+| `GET /agent` | Live agent panel: working or idle, the event it's on, its thinking and reply as they stream, the script it's running (or ran last) with each call, status and timing, the script's output, queued inputs, spend so far, and running look-back subagents nested under it. Relayed from the agent's `GET /live` |
 | `GET /admin` | Process diagnostics |
 | `GET /healthz` | `ok` |
 | `GET /metrics` | Prometheus text format |
@@ -157,7 +158,7 @@ before 1.3.0).
 
 | Variable | Meaning |
 | --- | --- |
-| `AGENT_ADDR` | Listen address for `POST /submit` and `GET /healthz` (default `127.0.0.1:8082`); point `LIFESTREAM_AGENT_URL` here |
+| `AGENT_ADDR` | Listen address for `POST /submit`, `GET /live?owner=` (server-sent events, one JSON snapshot per change, for the dashboard's `/agent`) and `GET /healthz` (default `127.0.0.1:8082`); point `LIFESTREAM_AGENT_URL` here |
 | `LIFESTREAM_API_URL` | Go's internal API (default `http://127.0.0.1:8081`) |
 | `DATA_DIR` | Where `agent.db` lives (default `~/.lifestream`) |
 | `AGENT_MODEL` | `provider/modelId` (default `anthropic/claude-sonnet-5-5`). A conversation keeps its model, so on its next event an existing one is moved to this |
@@ -176,6 +177,13 @@ conversation, others queue. Two extensions:
 - **code mode** (Pi Durable's): the one tool the model is offered. Scripts
   run in a QuickJS sandbox (no network, no files) and resume after a
   restart without repeating finished calls.
+
+The live panel (`src/live.ts`) reads Pi Durable's conversation view
+(`viewState()`: `pi.live` for the in-flight response, the tool round and a
+running script's nested calls; `pi.inbox`; `pi.usage`) and the task graph
+(`taskGraph()`, for look-back subagents), and sends a snapshot at most every
+200 ms. A script's calls leave `pi.live` when it settles, so finished ones
+come from the code mode result's `details.calls`.
 
 Appending `collection.started`, or a `collection.amended` with an include or
 exclude, starts a look-back (`src/lookback.ts`): a background task that owns
@@ -237,9 +245,11 @@ internal/api/        the agent's internal API
 internal/dispatch/   delivers raw events to the agent
 internal/bus/        embedded NATS (in-process), backs the diagnostics samples
 internal/metrics/    process metrics, /metrics
-internal/web/        dashboard handlers, templates, assets/components.js (d3 + Rocket, <local-time>)
+internal/web/        dashboard handlers, templates, assets/components.js (d3 + Rocket, <local-time>),
+                     agent.go (relays the agent's live feed to /agent)
 agent/src/           the Pi Durable agent: main, agent (harness, code mode, per-owner conversations),
-                     data (extension: query, append, sections), lookback (subagent task), goapi, server
+                     data (extension: query, append, sections), lookback (subagent task),
+                     live (snapshots for the panel), goapi, server
 agent/test/          faux-model tests and the end-to-end test
 deploy/              deploy.sh and k8s/ (kustomize; Deployment, PVC, Service, Ingresses, basic-auth Middleware, Litestream config)
 scripts/             tunnel.sh and its ngrok traffic policy (mise run tunnel)

@@ -163,6 +163,10 @@ agent that survives crashes. We write the application around it.
   corrected readings by id, for about a cent per text.
 - **The agent never replies by text.** Its replies are one-line summaries
   nobody reads; its work is what it writes.
+- **You can watch it work.** The dashboard's agent panel shows, live, the
+  event it's on, its thinking, the script it writes and each call that
+  script makes, its spend, and any look-back subagents running under it,
+  straight from Pi Durable's conversation view and task graph.
 
 ## Architecture
 
@@ -207,7 +211,6 @@ one writer.
 - [ ] Login for the dashboard (basic auth stands in).
 - [ ] `query` reads every owner's rows; fine for one user, revisit before a
       second.
-- [ ] Live view of what the agent is doing (Pi Durable's watch API).
 - [ ] The name.
 
 ## Phasing
