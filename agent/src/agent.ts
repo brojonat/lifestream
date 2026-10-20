@@ -10,7 +10,6 @@ import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { dataExtension, OwnerDoc } from "./data.ts";
 import type { GoApi, StoredEvent } from "./goapi.ts";
-import type { LookBackOptions } from "./lookback.ts";
 
 /** owner -> conversation id; conversations have no keys of their own. */
 const Owners = defineDoc<{ byOwner: Record<string, number> }>({
@@ -32,8 +31,6 @@ export type AgentOptions = {
 	model: { provider: string; modelId: string };
 	api: GoApi;
 	onReport?: (err: unknown) => void;
-	/** Look-back knobs (a stub judge, a short retry delay); for tests. */
-	lookBack?: LookBackOptions;
 };
 
 export class Agent {
@@ -54,7 +51,7 @@ export class Agent {
 		// them (callers: ["tools"]), so code mode is the one tool it's offered.
 		const sandbox = new CodemodeSandbox({ memoryLimitBytes: 128 * 1024 * 1024 });
 		const registry = createRegistry();
-		registry.install(dataExtension(opts.api, { lookBack: opts.lookBack }));
+		registry.install(dataExtension(opts.api));
 		registry.install(createCodemodeExtension({ sandbox, models: false }));
 		const harness = await Harness.open(
 			await openNodeSqliteStorage(opts.storagePath),

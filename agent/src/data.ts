@@ -11,7 +11,7 @@ import type { Context } from "@earendil-works/chord/context";
 import { Type } from "@earendil-works/pi-ai";
 import { type ConversationId, defineDoc, defineExtension, defineTool, section, type ToolExecutionApi } from "@earendil-works/pi-durable";
 import { ApiError, type Collection, type GoApi, type Schema } from "./goapi.ts";
-import { DEFAULT_LOOKBACK_DAYS, type LookBackOptions, lookBackTask } from "./lookback.ts";
+import { DEFAULT_LOOKBACK_DAYS, lookBackTask } from "./lookback.ts";
 
 /** Which owner a conversation belongs to. Written when the conversation is created. */
 export const OwnerDoc = defineDoc<{ owner: string }>({
@@ -42,7 +42,7 @@ Do related work in one script. A rejected call throws with the reason, e.g. a 42
 
 How the data is shaped:
 - Collections are named sets of events with plain-English include and exclude rules (<collections>). A metric collection also holds numbers (metric_values) and gets a chart.
-- Records (record.saved) keep anything else worth keeping, in whatever shape fits: a short kind ("workout", "meal") and a JSON object. Query the records table first and reuse the kinds and field names already there, so the data stays consistent.
+- Records (record.saved) keep anything else worth keeping, in whatever shape fits: a short kind ("workout", "meal") and a JSON object. Query the records table first and reuse the kinds and field names already there, so the data stays consistent. When a collection comes to cover data you kept as records, file it in the collection and withdraw those records, so nothing is counted twice.
 - Events are append-only, and query can't write. Change data by appending: replaces= supersedes a value or record; metric.removed, record.removed and label.removed withdraw.
 
 For each event:
@@ -50,12 +50,12 @@ For each event:
 2. Data: label it into every open collection whose rules it matches (label.applied, at the collection's current version; an exclude beats an include). For a metric collection, also append a metric.observed for each number it reports ("175 today, 176 yesterday" is two). Use the collection's unit unless the event names another. Keep anything else worth keeping as a record.
 3. A value or record is dated at the event's time unless the owner says when it happened ("yesterday", "on 10-19", "Monday morning"): then pass observed_at, counting from the event's timestamp, in the owner's timezone if <owner_rules> gives one (noon when no time of day is given, e.g. 2026-10-19T12:00:00-07:00), else UTC.
 4. Corrections and retractions ("the 176 was 175", "that was Tuesday", "delete yesterday's weight", "that wasn't about the migration"): query for what they mean, then append the change.
-5. If you can't tell what the owner meant (an implausible number, an ambiguous command), append review.flagged with a short question instead of guessing. The answer comes back as a review.answered event with the question and the original event_id; act on it then.
+5. If you can't tell what the owner meant (an implausible number, an ambiguous command), append review.flagged with a short question instead of guessing. The answer comes back as a review.answered event with the question and the original event_id; act on it then. If later events answer it first, act on that and append review.withdrawn (parent_id: the review.flagged event) so the owner isn't asked a settled question.
 6. A label.corrected event from the dashboard means the owner fixed a label you made (or missed). Learn the boundary from it; if it shows a rule is missing, amend the collection. collection.* events from the dashboard are changes the owner already made: don't repeat or reverse them.
 7. When the owner teaches you something ("w means weight", "I'm on Pacific time", "ignore anything from ~/scratch"), append a rule.added. Background work and future conversations only see what is written down. Follow every entry in <owner_rules>.
 8. Many events need nothing more than being stored. Then do nothing.
 
-Starting a collection or adding an include labels the last 7 days in the background (lookback_days changes the window; 0 skips it); an exclude re-checks current members. A "Look-back ... finished" message is that job reporting; nothing to do.
+Starting a collection or adding an include files the last 7 days of events in the background (lookback_days changes the window); an exclude re-checks current members. Leave that backfill to the job rather than doing it yourself, so the owner's next text isn't kept waiting; pass lookback_days: 0 only when the owner asks for no look-back. The job goes to a copy of you as a "Look-back job" message: it comes from the system, not the owner, so do what it asks, including cleaning up records and questions the collection now settles. A "Look-back ... finished" message is that job reporting back; nothing to do.
 
 A large payload arrives as a pointer; read it with query (SELECT substr(payload, 1, 8000) FROM events WHERE id = ?).
 
@@ -83,12 +83,9 @@ export function schemaSection(owner: string, s: Schema): string {
 export const text = (s: string) => ({ output: [{ type: "text" as const, text: s }] });
 export const fail = (s: string) => ({ ...text(s), isError: true });
 
-/**
- * Builds the extension. `api` is the Go client; `lookBack` tunes the
- * look-back task (tests).
- */
-export function dataExtension(api: GoApi, opts: { lookBack?: LookBackOptions } = {}) {
-	const LookBack = lookBackTask(api, opts.lookBack);
+/** Builds the extension. `api` is the Go client. */
+export function dataExtension(api: GoApi) {
+	const LookBack = lookBackTask();
 	// Starts the look-back over the last N days (or a re-check of members).
 	const lookBack = (tapi: ToolExecutionApi, ctx: Context, owner: string, collectionId: string, mode: "include" | "exclude", days: number | undefined, triggerEventId: string) => {
 		if (days === 0) return;

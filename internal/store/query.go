@@ -106,7 +106,7 @@ var agentEvents = []struct {
 	payload any
 	does    string
 }{
-	{TypeCollectionStarted, CollectionStarted{}, "starts a collection (kind set or metric) and looks back lookback_days (default 7, 0 for none) in the background"},
+	{TypeCollectionStarted, CollectionStarted{}, "starts a collection, kind set (the default) or metric (numbers with a unit, charted), and looks back lookback_days (default 7, 0 for none) in the background"},
 	{TypeCollectionAmended, CollectionAmended{}, "exactly one of: add an include rule (looks back), add an exclude rule (re-checks members), or remove_rule (collection_rules.event_id of a rule an amendment added)"},
 	{TypeCollectionStopped, CollectionRef{}, "stops a collection: no new labels"},
 	{TypeCollectionResumed, CollectionRef{}, "reopens a stopped collection"},
@@ -120,6 +120,9 @@ var agentEvents = []struct {
 	{"review.flagged", struct {
 		Question string `json:"question"`
 	}{}, "asks the owner a question on the dashboard; the answer comes back as review.answered"},
+	{"review.withdrawn", struct {
+		Reason string `json:"reason"`
+	}{}, "takes back a question that later events answered; parent_id is the review.flagged event"},
 }
 
 // AgentEventTypes is the set the internal API accepts from the agent.

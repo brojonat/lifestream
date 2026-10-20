@@ -15,7 +15,7 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@ear
 import { Agent, describe, POINTER_BYTES } from "../src/agent.ts";
 import { type Collection, GoApi, type QueryResult, type StoredEvent } from "../src/goapi.ts";
 import { newLogger } from "../src/log.ts";
-import { type Judge, judgePrompt, parseVerdicts } from "../src/lookback.ts";
+import { lookBackJob } from "../src/lookback.ts";
 import { handler } from "../src/server.ts";
 
 const ctx = BACKGROUND_CONTEXT;
@@ -131,13 +131,13 @@ after(async () => {
 });
 
 let dbs = 0;
-function open(responses: Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0], opts: { judge?: Judge; db?: string; modelId?: string } = {}) {
+function open(responses: Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0], opts: { db?: string; modelId?: string } = {}) {
 	const faux = fauxProvider();
 	faux.setResponses(responses);
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const storagePath = join(dir, opts.db ?? `agent-${++dbs}.db`); // each test its own harness state
-	return Agent.open({ storagePath, models, model: { provider: "faux", modelId: opts.modelId ?? "faux-1" }, api: new GoApi(go.url), lookBack: { judge: opts.judge, retryBaseMs: 20 } }, ctx);
+	return Agent.open({ storagePath, models, model: { provider: "faux", modelId: opts.modelId ?? "faux-1" }, api: new GoApi(go.url) }, ctx);
 }
 
 test("steering, labeling, values, dedup and restart", async () => {
@@ -266,72 +266,79 @@ test("what the owner teaches becomes a rule the next request sees", async () => 
 	assert.match(prompt, /<owner_rules>\\n- w means weight\\n<\/owner_rules>/);
 });
 
-test("starting a collection labels the last 7 days in the background; an exclude re-checks members", async () => {
+test("look-backs run as a background copy of the steward and report back", async () => {
 	go.collections = [];
 	go.appends = [];
 	go.members = new Map(); // ids restart with appends; don't inherit another test's members
-	const now = Date.now();
-	const raw = (id: string, body: string, daysAgo: number, seq: number) =>
-		({ ...sms(id, body), seq, occurred_at: new Date(now - daysAgo * 86400_000).toISOString() });
-	go.events = [
-		raw("L1", "weight 176", 3, 101),
-		raw("L2", "groceries: eggs", 2, 102),
-		{ ...raw("L3", "", 2, 103), source: "agent", type: "label.applied" }, // derived: never judged
-		raw("L4", "dog weighed 40", 1, 104),
-		raw("L5", "start tracking weight", 0, 105), // the trigger itself
-	];
-	const judged: string[][] = [];
-	let failures = 1; // the first call fails, as if the model API hiccuped; the task must retry, not die
-	const judge: Judge = async (c, mode, events) => {
-		if (failures-- > 0) throw new Error("model overloaded");
-		judged.push([mode, ...events.map((e) => e.id)]);
-		return events.map((e) => {
-			const text = JSON.stringify(e.payload);
-			const member = mode === "include" ? /weigh/.test(text) : !/dog/.test(text);
-			return { event_id: e.id, member, value: Number(/(\d+)/.exec(text)?.[1]), reason: "test" };
-		});
+	// What the child's query finds: the owner's recent texts.
+	go.answer = () => ({ columns: ["id", "body"], rows: [["L1", "weight 176"], ["L2", "groceries: eggs"], ["L4", "dog weighed 40"]], truncated: false });
+	const prompts = { parent: [] as string[], child: [] as string[] };
+	// One responder for every model call, in either conversation: it acts on
+	// the newest user message the way the real model would.
+	const respond = (context: { messages: { role: string; content: unknown }[] }) => {
+		const all = JSON.stringify(context);
+		const child = all.includes("Look-back job (from the system"); // the job message, not the prompt that mentions it
+		(child ? prompts.child : prompts.parent).push(all);
+		const last = context.messages.at(-1)!;
+		if (last.role === "toolResult") return fauxAssistantMessage([fauxText(child ? "checked 3, changed 2" : "done")]);
+		const said = JSON.stringify(last.content);
+		if (said.includes("start tracking weight")) {
+			return script(`await tools.append({ type: "collection.started", parent_id: "L5", payload: { name: "weight", kind: "metric", unit: "lb", include: "weight readings" } })`);
+		}
+		if (said.includes("don't include the dog")) {
+			return script(`await tools.append({ type: "collection.amended", parent_id: "L6", payload: { collection_id: "01DERIVED1", exclude: "pets' weight" } })`);
+		}
+		if (said.includes("Look-back job") && said.includes("occurred at or after")) {
+			return script(`
+				const { rows } = await tools.query({ sql: "SELECT id, json_extract(payload, '$.Body') FROM events WHERE owner = ? AND occurred_at >= ?", params: ["01OWNER", "2026-10-10T00:00:00Z"] });
+				for (const [id, body] of rows) {
+					if (!/weigh/.test(body)) continue;
+					await tools.append({ type: "label.applied", parent_id: id, payload: { event_id: id, collection_id: "01DERIVED1", definition_version: 1, reason: "look-back: a weight" } });
+					await tools.append({ type: "metric.observed", parent_id: id, payload: { collection_id: "01DERIVED1", value: Number(/\\d+/.exec(body)[0]) } });
+				}
+			`);
+		}
+		if (said.includes("Look-back job") && said.includes("Re-check")) {
+			return script(`await tools.append({ type: "label.removed", parent_id: "L6", payload: { event_id: "L4", collection_id: "01DERIVED1", definition_version: 2, reason: "the dog" } })`);
+		}
+		return fauxAssistantMessage([fauxText("ok")]); // e.g. a look-back's report
 	};
-	const agent = await open([
-		script(`await tools.append({ type: "collection.started", parent_id: "L5", payload: { name: "weight", kind: "metric", unit: "lb", include: "weight readings" } })`),
-		fauxAssistantMessage([fauxText("started")]),
-		fauxAssistantMessage([fauxText("ok")]), // the look-back's report
-		script(`await tools.append({ type: "collection.amended", parent_id: "L6", payload: { collection_id: "01DERIVED1", exclude: "pets' weight" } })`),
-		fauxAssistantMessage([fauxText("amended")]),
-		fauxAssistantMessage([fauxText("ok")]), // the re-check's report
-	], { judge });
+	const agent = await open(Array(30).fill(respond));
 	const conv = await agent.conversationFor(OWNER, ctx);
-	await (await agent.submit(OWNER, sms("L5", "start tracking weight"), ctx)).wait(ctx);
 	const until = async (f: () => boolean) => {
-		for (let i = 0; i < 200 && !f(); i++) await new Promise((r) => setTimeout(r, 10));
-		assert.ok(f(), `timed out; appends=${go.appends.map((a) => a.body.type)} judged=${JSON.stringify(judged)}`);
+		for (let i = 0; i < 300 && !f(); i++) await new Promise((r) => setTimeout(r, 10));
+		assert.ok(f(), `timed out; appends=${go.appends.map((a) => a.body.type)}; parent saw: ${prompts.parent.at(-1)?.slice(-400)}`);
 	};
-	// The look-back is a background task: wait for its writes, not for the conversation.
-	await until(() => go.appends.filter((a) => a.body.type === "label.applied").length === 2 && go.appends.filter((a) => a.body.type === "metric.observed").length === 2);
+	const reported = (n: number) => prompts.parent.filter((p) => p.includes("finished: checked 3, changed 2")).length >= n;
+
+	await (await agent.submit(OWNER, sms("L5", "start tracking weight"), ctx)).wait(ctx);
+	// The look-back is a background task: wait for its report, not for the conversation.
+	await until(() => reported(1));
 	await conv.waitForIdle(ctx);
-	assert.deepEqual(judged[0], ["include", "L1", "L2", "L4"]);
-	const labels = go.appends.filter((a) => a.body.type === "label.applied");
-	assert.deepEqual(labels.map((a) => a.body.payload.event_id), ["L1", "L4"]);
-	assert.match(labels[0].key ?? "", /^lookback:01DERIVED1:v1:L1:label$/);
+	assert.deepEqual(go.appends.map((a) => [a.body.type, a.body.parent_id]), [
+		["collection.started", "L5"],
+		["label.applied", "L1"],
+		["metric.observed", "L1"],
+		["label.applied", "L4"],
+		["metric.observed", "L4"],
+	]);
 	assert.deepEqual(go.appends.filter((a) => a.body.type === "metric.observed").map((a) => a.body.payload.value), [176, 40]);
+	assert.match(prompts.child[0], /The owner's id is 01OWNER/, "the child has the steward's sections");
+	assert.match(prompts.child[0], /id=01DERIVED1 name=\\"weight\\"/);
+	assert.ok(!prompts.parent.some((p) => p.includes("Look-back job (from the system")), "the job runs in its own conversation");
+	assert.match(prompts.parent.at(-1)!, /Look-back for collection 01DERIVED1 finished: checked 3, changed 2\. No action needed\./);
 
 	await (await agent.submit(OWNER, sms("L6", "don't include the dog in weight"), ctx)).wait(ctx);
-	await until(() => go.appends.some((a) => a.body.type === "label.removed"));
+	await until(() => go.appends.some((a) => a.body.type === "label.removed") && reported(2));
 	await conv.waitForIdle(ctx);
-	assert.deepEqual(judged[1], ["exclude", "L1", "L4"]);
-	const removed = go.appends.filter((a) => a.body.type === "label.removed");
-	assert.deepEqual(removed.map((a) => a.body.payload.event_id), ["L4"]);
-	assert.equal(removed[0].body.payload.definition_version, 2);
+	assert.deepEqual(go.appends.at(-1)!.body.payload, { event_id: "L4", collection_id: "01DERIVED1", definition_version: 2, reason: "the dog" });
 	await agent.close(ctx);
 });
 
-test("judge prompt and verdict parsing", () => {
-	const c = { id: "C", name: "weight", kind: "metric" as const, unit: "lb", status: "open" as const, version: 2, rules: [{ kind: "include" as const, text: "weights", version: 1 }, { kind: "exclude" as const, text: "the dog", version: 2 }] };
-	const p = judgePrompt(c, "include", [sms("A", "weight 175")]);
-	assert.match(p, /- include: weights\n- exclude: the dog/);
-	assert.match(p, /"value": the number the event reports for weight in lb/);
-	assert.match(p, /id=A type=message.received/);
-	assert.deepEqual(parseVerdicts('Sure!\n[{"event_id":"A","member":true,"value":175},{"bogus":1}]\nDone.'), [{ event_id: "A", member: true, value: 175 }]);
-	assert.throws(() => parseVerdicts("no idea"), /no JSON array/);
+test("look-back jobs say what to do", () => {
+	const job = { owner: OWNER, collectionId: "C1", since: "2026-10-13T00:00:00Z", triggerEventId: "T1" };
+	assert.match(lookBackJob({ ...job, mode: "include" }), /^Look-back job \(from the system, not an event\)\. Event T1 changed collection C1.*occurred at or after 2026-10-13T00:00:00Z/s);
+	assert.match(lookBackJob({ ...job, mode: "exclude" }), /Re-check the collection's current members.*label\.removed/s);
 });
 
 test("large payloads become pointers", () => {

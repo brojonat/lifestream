@@ -190,6 +190,9 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 		default:
 			return invalid("unknown collection kind %q", p.Kind)
 		}
+		if p.Kind == KindSet && (p.Unit != "" || p.Metric != "") {
+			return invalid("unit and metric are for kind metric; this collection is a set")
+		}
 		if p.Kind == KindMetric && p.Metric == "" {
 			p.Metric = p.Name
 		}
@@ -815,10 +818,11 @@ func (s *Store) HasRule(ctx context.Context, collectionID, eventID string) (bool
 }
 
 // OpenFlags returns an owner's review.flagged events that have no
-// review.answered child yet, oldest first.
+// review.answered (the owner) or review.withdrawn (the agent) child yet,
+// oldest first.
 func (s *Store) OpenFlags(ctx context.Context, owner string) ([]Event, error) {
 	return s.queryEvents(ctx, selectEvent+` WHERE owner = ? AND type = 'review.flagged'
-		AND NOT EXISTS (SELECT 1 FROM events a WHERE a.parent_id = events.id AND a.type = 'review.answered')
+		AND NOT EXISTS (SELECT 1 FROM events a WHERE a.parent_id = events.id AND a.type IN ('review.answered', 'review.withdrawn'))
 		ORDER BY seq`, owner)
 }
 

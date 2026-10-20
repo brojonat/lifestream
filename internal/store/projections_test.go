@@ -178,6 +178,7 @@ func TestProjectionRejects(t *testing.T) {
 
 	f.mustReject(TypeCollectionStarted, CollectionStarted{Name: "x"})
 	f.mustReject(TypeCollectionStarted, CollectionStarted{Name: "x", Include: "y", Kind: "bogus"})
+	f.mustReject(TypeCollectionStarted, CollectionStarted{Name: "sleep", Include: "hours slept", Unit: "hours"}) // a set with a unit
 	f.mustReject(TypeCollectionAmended, CollectionAmended{CollectionID: w})
 	f.mustReject(TypeCollectionAmended, CollectionAmended{CollectionID: w, Include: "a", Exclude: "b"})
 	f.mustReject(TypeCollectionAmended, CollectionAmended{CollectionID: "nope", Include: "a"})
@@ -338,6 +339,13 @@ func TestRemoveRuleAndFlags(t *testing.T) {
 	f.s.Append(ctx, Event{Owner: f.owner, Source: "dashboard", Type: "review.answered", ParentID: flag.ID, Payload: json.RawMessage(`{"answer":"no, typo"}`)})
 	if open, _ := f.s.OpenFlags(ctx, f.owner); len(open) != 0 {
 		t.Fatalf("answered flag still open: %v", open)
+	}
+
+	// The agent takes back a question later events settled.
+	settled := f.must("review.flagged", msg.ID, map[string]string{"question": "is 177 a weight?"})
+	f.must("review.withdrawn", settled.ID, map[string]string{"reason": "the owner started tracking weight"})
+	if open, _ := f.s.OpenFlags(ctx, f.owner); len(open) != 0 {
+		t.Fatalf("withdrawn flag still open: %v", open)
 	}
 }
 
