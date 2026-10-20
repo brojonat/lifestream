@@ -25,14 +25,14 @@ run = ['test -z "$(gofmt -l cmd internal)" || { gofmt -l cmd internal; exit 1; }
 
 [tasks.dev]
 description = "Serve with hot reload (air), tee to logs/serve.log"
-run = 'mkdir -p logs; f() { air "$@" 2>&1 | tee logs/serve.log; }; f'
+run = 'set -o pipefail; mkdir -p logs; f() { air "$@" 2>&1 | tee logs/serve.log; }; f'
 
 [tasks.dev-agent]
 description = "Run the Pi Durable agent with reload, tee to logs/agent.log"
-run = 'mkdir -p logs; f() { cd agent && node --watch src/main.ts "$@" 2>&1 | tee ../logs/agent.log; }; f'
+run = 'set -o pipefail; mkdir -p logs; f() { cd agent && node --watch src/main.ts "$@" 2>&1 | tee ../logs/agent.log; }; f'
 
 [tasks.tunnel]
-description = "ngrok to /twilio/sms, point the Twilio webhook at it, tee to logs/tunnel.log; run before dev"
+description = "ngrok to /twilio/sms with the Twilio webhook pointed at it until exit (then restored), tee to logs/tunnel.log; run before dev"
 run = "set -o pipefail; mkdir -p logs; scripts/tunnel.sh 2>&1 | tee logs/tunnel.log"
 
 [tasks.stop]
