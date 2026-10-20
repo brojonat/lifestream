@@ -2,8 +2,9 @@
 # lands (D1, TODO 24). Credentials are htpasswd lines in the
 # lifestream-dashboard-auth Secret, created by hand (see kustomization.yaml).
 # The ingest routes stay on ingress.yaml without auth: Twilio signs its
-# requests and /events takes a bearer token. Traefik prefers the longer
-# rule, so those exact paths win over this prefix.
+# requests and /events takes a bearer token. Traefik's default priority is
+# the rule's length, and Path(`/events`) is exactly as long as
+# PathPrefix(`/`), so this router is pinned to the lowest priority.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -21,6 +22,7 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.middlewares: lifestream-dashboard-auth@kubernetescrd
+    traefik.ingress.kubernetes.io/router.priority: "1"
 spec:
   ingressClassName: traefik
   # Same certificate as ingress.yaml, which owns it (the cert-manager
