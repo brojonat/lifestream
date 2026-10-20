@@ -1,6 +1,4 @@
 [tools]
-claude = "latest"
-claude-code = "latest"
 go = "1.27"
 node = "25"
 uv = "latest"
@@ -32,6 +30,10 @@ run = 'mkdir -p logs; f() { air "$@" 2>&1 | tee logs/serve.log; }; f'
 [tasks.dev-agent]
 description = "Run the Pi Durable agent with reload, tee to logs/agent.log"
 run = 'mkdir -p logs; f() { cd agent && node --watch src/main.ts "$@" 2>&1 | tee ../logs/agent.log; }; f'
+
+[tasks.tunnel]
+description = "ngrok to /twilio/sms, point the Twilio webhook at it, tee to logs/tunnel.log; run before dev"
+run = "set -o pipefail; mkdir -p logs; scripts/tunnel.sh 2>&1 | tee logs/tunnel.log"
 
 [tasks.stop]
 description = "Kill whatever listens on port 8080 (an orphaned air child, usually)"

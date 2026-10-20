@@ -17,6 +17,8 @@ spec:
       labels:
         app: lifestream
     spec:
+      # Docker Hub credentials, copied from the default namespace.
+      imagePullSecrets: [{ name: regcred }]
       securityContext:
         # One uid for every container: Litestream checkpoints both databases,
         # so it must be able to write the files the other two create.

@@ -235,7 +235,7 @@ Node ≥ 22.19 (mise pins 25), no build step: `node src/main.ts`. Pi Durable
 | `AGENT_ADDR` | Listen address for `POST /submit` and `GET /healthz` (default `127.0.0.1:8082`); point `LIFESTREAM_AGENT_URL` here |
 | `LIFESTREAM_API_URL` | Go's internal API (default `http://127.0.0.1:8081`) |
 | `DATA_DIR` | Where `agent.db` lives (default `~/.lifestream`) |
-| `AGENT_MODEL` | `provider/modelId` (default `anthropic/claude-haiku-4-5-20251001`); stored per conversation when it is created |
+| `AGENT_MODEL` | `provider/modelId` (default `anthropic/claude-haiku-5-5`); stored per conversation when it is created |
 | `ANTHROPIC_API_KEY` | Read by the Anthropic provider |
 
 One conversation per owner. Each event is submitted with its id as

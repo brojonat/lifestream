@@ -4,7 +4,8 @@ tmp_dir = "tmp"
 [build]
   cmd = "go build -o ./tmp/lifestream ./cmd/lifestream"
   bin = "./tmp/lifestream"
-  args_bin = ["serve"]
+  # All interfaces, so a phone on the tailnet can reach the dashboard.
+  args_bin = ["serve", "--addr", ":8080"]
   include_ext = ["go", "html", "css", "js"]
   exclude_dir = ["tmp", "logs", ".agents", ".claude"]
   delay = 500
