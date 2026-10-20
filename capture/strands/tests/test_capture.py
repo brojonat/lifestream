@@ -1,4 +1,5 @@
 import json
+import os
 import socket
 import subprocess
 import time
@@ -120,7 +121,10 @@ def test_against_the_real_service(tmp_path):
             s.bind(("127.0.0.1", 0))
             ports.append(s.getsockname()[1])
     web, api = (f"127.0.0.1:{p}" for p in ports)
-    go = subprocess.Popen([BIN, "serve", "--data-dir", tmp_path, "--addr", web, "--api-addr", api], stderr=subprocess.DEVNULL)
+    # mise loads .env into the test's environment; without this the server
+    # would dispatch to the real dev agent at LIFESTREAM_AGENT_URL.
+    clean = {k: v for k, v in os.environ.items() if not k.startswith(("LIFESTREAM_", "TWILIO_"))}
+    go = subprocess.Popen([BIN, "serve", "--data-dir", tmp_path, "--addr", web, "--api-addr", api], env=clean, stderr=subprocess.DEVNULL)
     try:
         for _ in range(100):
             try:
