@@ -101,6 +101,7 @@ Run it locally first; deploying is a second step.
 - [x] 28. Rule log with undo for every steering command; review queue where answers become events submitted to the agent. (after: 27)
 - [x] 29. Rules doc editor for the `rules` extension. (after: 22)
 - [x] 30. Font size 16px on all inputs (iOS zoom), works at phone width.
+- [ ] 35. Live agent panel: what the agent is doing right now (the event it's on, streamed thinking/text, tool calls with their output, queued inputs) and running model cost. Pi Durable's `conversation.watch()` (or the experimental `watchEvents()`) on the agent, streamed over a new endpoint on its loopback API; Go relays it to the dashboard's SSE stream, since only Go is reachable. Cost from the view's `docs["pi.usage"]`. See the pi-durable README "Watching a Conversation" and "Agent Events". (after: 25)
 
 ## Production basics
 
