@@ -271,3 +271,90 @@ instead of a bare commit hash.
 
 **How to avoid:** expect it, or tag a real version (`v0.1.0`) when phase 1
 ships so describe uses that.
+
+## Tests inherit `.env` through mise
+
+**What happened:** after `.env` gained `LIFESTREAM_AGENT_URL`, `mise run
+test` sent the Strands adapter test's events to the running dev agent,
+which processed them with the real model. The test starts `lifestream
+serve` without `--agent-url`, so the server read the variable from the
+environment.
+
+**Why it's surprising:** the test uses a temp data dir and random ports,
+so it looks isolated. But mise loads `.env` into every task, tests
+included, and urfave/cli flags fall back to env vars.
+
+**How to avoid:** anything a test spawns gets an environment without
+`LIFESTREAM_*` / `TWILIO_*` (see `capture/strands/tests/test_capture.py`),
+or passes every flag explicitly, as `agent/test/e2e.test.ts` does.
+
+## Traefik breaks route ties by rule length
+
+**What happened:** with the dashboard ingress on `/` (Prefix, basic auth)
+next to the ingest ingress on `/events` (Exact), `POST /events` got the
+basic-auth 401. `/twilio/sms` on the same ingress worked.
+
+**Why it's surprising:** Exact looks more specific than a `/` prefix.
+Traefik doesn't care: a router's default priority is its rule's length,
+and ``Path(`/events`)`` is exactly as long as ``PathPrefix(`/`)``.
+
+**How to avoid:** give the catch-all router an explicit
+`traefik.ingress.kubernetes.io/router.priority: "1"` (done in
+`deploy/k8s/dashboard.yaml`). Test every public path after adding an
+ingress, with and without credentials.
+
+## `firekeeper` ran out of inotify instances
+
+**What happened:** `kubectl logs -f` died at once with "failed to create
+fsnotify watcher: too many open files"; plain `kubectl logs` worked.
+
+**Why it's surprising:** it looks like a kubectl or API problem. It's the
+node: `fs.inotify.max_user_instances` was the default 128, and root (k3s
+plus one containerd shim per container) held nearly all of them.
+
+**How to avoid:** the node now has `/etc/sysctl.d/90-inotify.conf`
+(8192 instances, 524288 watches). There's no SSH key for it from this
+machine; a privileged pod with `hostPID` and `/` mounted at `/host` plus
+`chroot /host` does node admin through kubectl. Delete the pod after.
+
+## Cloudflare: R2 buckets and scoped keys without the dashboard
+
+**What happened:** the R2 keys in other projects' `.env.prod` are
+bucket-scoped and can't create buckets, and the `CLOUDFLARE_CREATE_TOKEN`
+in `~/projects/iybi-twc/.env` answered "Authentication error", which looked
+like a dead token.
+
+**Why it's surprising:** that token is a *user* token, so it fails on
+`/accounts/{id}/tokens/verify` and works on `/user/tokens/...`. And R2's S3
+credentials aren't a separate thing: any API token with R2 permissions is
+one (access key id = token id, secret = sha256 hex of the token value).
+
+**How to avoid:** create the bucket with `POST
+/accounts/{acct}/r2/buckets` (iybi-twc's `CLOUDFLARE_API_TOKEN` can), then
+`POST /user/tokens` with the create token, resource
+`com.cloudflare.edge.r2.bucket.<acct>_default_<bucket>` and permission
+group "Workers R2 Storage Bucket Item Write". Derive the two keys. That's
+how `lifestream` got its bucket and token.
+
+## `air` is per Go version under mise
+
+**What happened:** `mise run dev` failed with "No version is set for shim:
+air" although `air` was installed.
+
+**Why it's surprising:** `go install` puts binaries in the bin of the Go
+that ran it. `air` had been installed under Go 1.25; this project pins
+1.27, so mise's shim found no `air` for it.
+
+**How to avoid:** `mise run setup` (it runs `go install ...air@latest`
+under the pinned Go) after changing the Go version, then `mise reshim`.
+
+## A pipe into `tee` hides failures
+
+**What happened:** `mise run tunnel` and `mise run dev` failed and mise
+reported exit code 0.
+
+**Why it's surprising:** a pipeline's status is its last command's, and
+`tee` succeeds.
+
+**How to avoid:** tasks that tee start with `set -o pipefail;` (dev,
+dev-agent and tunnel do).

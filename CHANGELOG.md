@@ -4,6 +4,43 @@ All notable changes to this project are recorded here, newest first. The
 format follows [Keep a Changelog](https://keepachangelog.com/). Entries are
 grouped by date; nothing is versioned yet.
 
+## 2026-10-20
+
+### Added
+
+- Live in prod at `https://lifestream.brojonat.com` on the `firekeeper`
+  k3s cluster. The first real texts ("Start tracking my weight",
+  "Weight 174.4") were filed by the real agent, locally and in prod.
+- `mise run tunnel` (`scripts/tunnel.sh`): ngrok with a traffic policy
+  that lets only `/twilio/sms` through, rewrites `LIFESTREAM_PUBLIC_URL`
+  in `.env`, points the Twilio webhook at the tunnel and restores it on
+  exit.
+- The prod dashboard is public behind Traefik basic auth
+  (`deploy/k8s/dashboard.yaml`), pinned to the lowest router priority so
+  `/events` and `/twilio/sms` stay on their own auth.
+- R2 bucket `lifestream` for Litestream, with a token scoped to it.
+- TODO 35: live agent panel from Pi Durable's watch API. TODO 36: rotate
+  `firekeeper`'s k3s certs before 2027-02-15.
+
+### Changed
+
+- Agent model default is `anthropic/claude-haiku-5-5` (was Haiku 4.5).
+- `mise run dev` serves on all interfaces (`.air.toml`), so the tailnet
+  reaches the local dashboard.
+- Ingress uses traefik and cert-manager `letsencrypt-prod`; the pod pulls
+  with `regcred`, like the cluster's other apps.
+- Dev tasks set `pipefail`, so a crash under `tee` is a failure.
+- mise `[tools]` no longer installs `claude` / `claude-code`.
+
+### Fixed
+
+- The Strands adapter's real-service test inherited `.env` through mise
+  and dispatched its events to the running dev agent. It now starts the
+  server without `LIFESTREAM_*` / `TWILIO_*` variables.
+- `firekeeper` ran out of inotify instances (128, the default), which broke
+  `kubectl logs -f`. Raised to 8192 instances and 524288 watches in
+  `/etc/sysctl.d/90-inotify.conf`.
+
 ## 2026-10-19
 
 ### Changed

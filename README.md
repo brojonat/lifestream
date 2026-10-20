@@ -11,11 +11,11 @@ publishes or texts back. The design is in [VISION.md](VISION.md), work in
 flight in [TODO.md](TODO.md), pitfalls in [LEARNINGS.md](LEARNINGS.md).
 "Lifestream" is a placeholder name.
 
-**Status (2026-10-19): refocused.** Monetization features (paid topics,
-artifacts, chapter order, redaction) were pruned; [PRUNED.md](PRUNED.md)
-says what they were and where they live in git (tag `pre-prune`). Next
-step: text the Twilio number for real and watch the agent file it
-(TODO 33).
+**Status (2026-10-20): live.** Texts to the Twilio number reach
+`https://lifestream.brojonat.com`, the agent (Haiku 5.5) files them, and
+the dashboard charts them. Next: two weeks of daily use (TODO 34).
+Monetization features were pruned on 2026-10-19; [PRUNED.md](PRUNED.md)
+says what they were and where they live in git (tag `pre-prune`).
 
 ## How it fits together
 
@@ -42,14 +42,22 @@ everything.
 ```
 mise install          # pins Go, Node, uv
 mise run setup        # go mod tidy, install air
-mise run dev          # hot reload, http://127.0.0.1:8080, tees logs/serve.log
+mise run dev          # hot reload on :8080 (all interfaces, so the tailnet reaches it), tees logs/serve.log
 mise run dev-agent    # the agent, tees logs/agent.log
+mise run tunnel       # texts to the local server instead of prod, until it exits; run before dev
 mise run test
 mise run lint
 mise run build        # ./bin/lifestream
 ```
 
-Tests use temp dirs only and never touch a real data dir.
+Tests use temp dirs only and never touch a real data dir. Anything a test
+spawns gets a clean environment, since mise loads `.env` into it.
+
+`mise run tunnel` starts ngrok (only `/twilio/sms` gets through,
+`scripts/ngrok-policy.yml`), writes its URL to `LIFESTREAM_PUBLIC_URL` in
+`.env`, and points the Twilio number's webhook at it. On exit it points the
+webhook back where it was (prod). The URL changes every run, so restart
+`mise run dev` after it.
 
 ## CLI
 
@@ -224,6 +232,9 @@ Environment variables only (mise loads `.env` if present; never commit it).
 | `CODEX_HOME` | capture | Where Codex keeps its rollouts (default `~/.codex`) |
 | `LOG_LEVEL` | all | `debug`, `info`, `warn`, `error` |
 | `LOG_FORMAT` | all | `json` for machine-readable logs |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_NUMBER` | tunnel | The account and the E.164 number whose webhook `mise run tunnel` moves |
+| `DOCKER_REPO`, `LIFESTREAM_HOST` | deploy | Image repo prefix (`brojonat`) and public hostname (`lifestream.brojonat.com`) |
+| `DASHBOARD_USER`, `DASHBOARD_PASSWORD` | deploy | Basic auth for the prod dashboard (kept in `.env`, turned into a Secret by hand) |
 
 ### Agent (`agent/`)
 
@@ -259,21 +270,39 @@ One pod in namespace `lifestream`: the Go service, the agent and a
 Litestream sidecar sharing a PVC at `/data`. One replica, `Recreate`, since
 SQLite has one writer. An init container restores both databases from the
 replicas when the volume is empty. The agent's API stays on the pod's
-loopback; the Ingress exposes only `/twilio/sms` and `/events` until login
-lands (TODO 24). Use `kubectl -n lifestream port-forward deploy/lifestream
-8080` for the dashboard.
+loopback.
+
+It runs on the `firekeeper` k3s cluster at `https://lifestream.brojonat.com`
+(traefik, cert-manager `letsencrypt-prod`, images pulled with `regcred`).
+`/twilio/sms` and `/events` are public with their own auth (Twilio
+signature, bearer token). Everything else, the dashboard included, is
+behind Traefik basic auth until login lands (TODO 24); the credentials are
+`DASHBOARD_USER` / `DASHBOARD_PASSWORD` in `.env`.
+
+Litestream writes to the R2 bucket `lifestream` with a token scoped to that
+bucket. Both were made through the Cloudflare API, no dashboard; see
+LEARNINGS.md.
+
+`mise run deploy` builds and pushes both images at the current commit and
+applies `deploy/k8s` (it refuses a dirty tree). From scratch:
 
 ```
 kubectl create namespace lifestream
+kubectl get secret regcred -n default -o json | jq 'del(.metadata.namespace,.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp)' | kubectl apply -n lifestream -f -
 kubectl -n lifestream create secret generic lifestream-env --from-env-file=.env.prod
 #   TWILIO_AUTH_TOKEN, ANTHROPIC_API_KEY, LITESTREAM_BUCKET, LITESTREAM_ENDPOINT,
 #   LITESTREAM_ACCESS_KEY_ID, LITESTREAM_SECRET_ACCESS_KEY
-DOCKER_REPO=registry.example.com/me LIFESTREAM_HOST=ls.example.com mise run deploy
+printf '%s:%s\n' "$DASHBOARD_USER" "$(openssl passwd -apr1 "$DASHBOARD_PASSWORD")" |
+  kubectl -n lifestream create secret generic lifestream-dashboard-auth --from-file=users=/dev/stdin
+mise run deploy
 kubectl -n lifestream exec deploy/lifestream -c lifestream -- /lifestream users add --data-dir /data --name me --phone +1555…
 ```
 
 Then point the Twilio number's messaging webhook at
-`https://$LIFESTREAM_HOST/twilio/sms` (HTTP POST).
+`https://$LIFESTREAM_HOST/twilio/sms` (HTTP POST). Changing a value in
+`.env.prod` means re-creating `lifestream-env` (`--dry-run=client -o yaml |
+kubectl apply -f -`) and `kubectl -n lifestream rollout restart
+deploy/lifestream`.
 
 ## Layout
 
@@ -299,5 +328,6 @@ testdata/codex/        a synthetic Codex rollout and notify payload
 capture/claude-code/   the Claude Code plugin (Stop and SessionEnd hooks); .claude-plugin/ is its marketplace
 capture/pi/            the pi extension (turn_end, session_shutdown); tested from agent/test
 capture/strands/       the Strands hook provider (Python, uv; pytest, ruff)
-deploy/              deploy.sh and k8s/ (kustomize; Deployment, PVC, Service, Ingress, Litestream config)
+deploy/              deploy.sh and k8s/ (kustomize; Deployment, PVC, Service, Ingresses, basic-auth Middleware, Litestream config)
+scripts/             tunnel.sh and its ngrok traffic policy (mise run tunnel)
 ```

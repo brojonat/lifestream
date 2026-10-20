@@ -13,19 +13,17 @@ redaction were pruned (PRUNED.md, tag `pre-prune`); the rex, artifact
 textbook and paid notification tracks that used to sit at the bottom of
 this file live there too.
 
-## Next up: text the number, see it filed (TODO 33)
+## Next up: use it (TODO 34)
 
-The loop has only ever run against a faux model. First session's goal: a
-real text from my phone reaches the store and the real agent files it.
-Run it locally first; deploying is a second step.
+**2026-10-20: live.** TODO 33 is done: texts to +1 567-399-1269 reach
+`https://lifestream.brojonat.com`, Haiku 5.5 files them, the dashboard
+charts them (README "Deploy"). The first real run filed "Weight 174.4"
+correctly, including by look-back when the collection came after the
+reading.
 
-- [ ] 33a. `.env` (gitignored, mise loads it): `ANTHROPIC_API_KEY`, `TWILIO_AUTH_TOKEN`, `LIFESTREAM_AGENT_URL=http://127.0.0.1:8082`, `LIFESTREAM_PUBLIC_URL` (the tunnel URL from 33b; Twilio signature checks need it exact).
-- [ ] 33b. Public URL for the local server: `ngrok http 8080` or `tailscale funnel 8080` (both installed). Only `/twilio/sms` needs to be reachable.
-- [ ] 33c. Pick the model (D2) and set `AGENT_MODEL`; the code default is still `anthropic/claude-haiku-4-5-20251001`.
-- [ ] 33d. `mise run build && ./bin/lifestream users add --name me --phone +1…` (my real number, E.164).
-- [ ] 33e. `mise run dev` and `mise run dev-agent` (logs in `logs/serve.log`, `logs/agent.log`); point the Twilio number's messaging webhook at `$LIFESTREAM_PUBLIC_URL/twilio/sms` (HTTP POST).
-- [ ] 33f. Text "track my weight", then "weight 175". Check `/inbox` (each text shows what it became) and `/` (the reading charted). If the agent files it wrong, fix the prompt in `agent/src/collections.ts` and record why in LEARNINGS.md.
-- [ ] 33g. Then deploy (`mise run deploy`, README "Deploy") and repoint the webhook.
+- [ ] 34. Two weeks of daily texts, no spreadsheet (the phase 1 gate, below).
+- [ ] F3. Click through the inbox, collections, rules and log pages on the phone with real data.
+- [ ] 36. Restart k3s on `firekeeper` before 2027-02-15, when its control-plane certs expire (the node warns `CertificateExpirationWarning`; a restart rotates them). Then check the local kubeconfig still works.
 
 ## Decisions already made (don't re-litigate)
 
@@ -46,11 +44,16 @@ Run it locally first; deploying is a second step.
 - The agent is a data handler first (2026-10-19): it files every event and
   never sells, publishes or sends. Monetization comes later as explicit
   features that read derived data, never as agent behavior.
+- The agent runs on Haiku 5.5 (`anthropic/claude-haiku-5-5`, the code
+  default; was D2, 2026-10-20). About $0.0001–0.0004 per text.
+- Prod lives on the `firekeeper` k3s cluster as `lifestream.brojonat.com`;
+  the dashboard is public behind basic auth until login (D1), not on the
+  tailnet (2026-10-20).
 
 ## Open decisions (ask the user)
 
-- [ ] D1. Login for the dashboard: Google OAuth, email magic link, or passkeys? Hellō (hello.coop) is a candidate. Not needed for 33 (dashboard stays on localhost / port-forward).
-- [ ] D2. Model for the agent: Haiku 4.5 is the code default and Haiku 5.5 (`claude-haiku-5-5`) is the current one; a local model through pi-ai is an option (VISION.md "Risks"). Decide in 33c.
+- [ ] D1. Login for the dashboard: Google OAuth, email magic link, or passkeys? Hellō (hello.coop) is a candidate. Traefik basic auth stands in until then.
+- [x] D2. Model: Haiku 5.5 (see "Decisions already made").
 - [ ] D3. Product name ("Lifestream" is a placeholder; repo dir is `tracker`).
 
 ## Bootstrap
@@ -107,13 +110,14 @@ Run it locally first; deploying is a second step.
 
 - [x] 31. `/healthz` and `/metrics` (Prometheus) on Go; `/healthz` on the agent; slog JSON in prod, `LOG_LEVEL`; graceful SIGTERM on both.
 - [x] 32. Dockerfiles for both; k8s manifests: one Deployment, 1 replica, `strategy: Recreate`, two containers sharing a PVC; Litestream sidecar backing up both SQLite files; Ingress exposes only `/twilio/sms` and the dashboard. Secrets (Twilio auth token, model API key) from env. (after: 31)
-- [ ] 33. Text `weight 175` end to end and watch it appear on the dashboard. Broken into 33a–g under "Next up". (after: 10, 15, 19, 25, 32)
+- [x] 32a. Deployed 2026-10-20: traefik + letsencrypt ingress, `regcred` pulls, dashboard behind basic auth, R2 bucket `lifestream` with a bucket-scoped token.
+- [x] 33. Text `weight 175` end to end and watch it appear on the dashboard. Done 2026-10-20, locally (ngrok, `mise run tunnel`) then in prod. (after: 10, 15, 19, 25, 32)
 
 ## Follow-ups found 2026-10-17
 
 - [ ] F1. Run the pi extension (`capture/pi/lifestream.ts`) inside a live pi and check a turn reaches the server; so far only tested with a fake pi.
 - [ ] F2. Install the Claude Code plugin and check a real Stop hook sends a turn.
-- [ ] F3. Click through the inbox, collections, rules and log pages in a browser with real data; so far only handler tests. (after: 33)
+- [ ] F3. Click through the inbox, collections, rules and log pages in a browser with real data; so far only handler tests. Now possible in prod (see "Next up"). (after: 33)
 
 ## Phase 1 exit gate
 
