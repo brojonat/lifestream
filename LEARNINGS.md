@@ -1,7 +1,8 @@
 # Learnings
 
 Pitfalls found the hard way. Each entry: what happened, why it was
-surprising, how to avoid it.
+surprising, how to avoid it. Entries about the capture adapters and
+harnesses moved with them to `~/projects/lifestream-clients` (2026-10-20).
 
 ## pi's npm scope was renamed
 
@@ -13,93 +14,6 @@ change still use the old scope, and nothing in them says it moved.
 
 **How to avoid:** import from `@earendil-works/*`, and treat older pi
 examples as possibly out of date.
-
-## Codex hooks are off by default
-
-**What happened:** Codex reads hooks from `~/.codex/hooks.json` (and
-`<repo>/.codex/hooks.json`), but hooks only run once they're enabled in
-`~/.codex/config.toml`.
-
-**Why it's surprising:** a correct `hooks.json` silently does nothing.
-
-**How to avoid:** the Codex capture install step has to enable hooks in
-`config.toml` as well as writing `hooks.json`. Check that a test turn
-actually reaches the server.
-
-## Claude Code waits for Stop hooks and reads their stdout
-
-**What happened:** the capture hook runs on `Stop` and `SessionEnd`.
-Claude Code waits for a Stop hook to finish, parses its stdout as a
-decision, and treats exit 2 as "don't stop". SessionEnd hooks share a
-1.5 s budget.
-
-**Why it's surprising:** it looks like a fire-and-forget notification.
-
-**How to avoid:** print nothing on stdout, never exit 2, keep HTTP
-timeouts short, and exit 0 when the service is unreachable (the transcript
-is the retry buffer). Docs: https://code.claude.com/docs/en/hooks.md
-
-## Claude Code transcripts hold file backups
-
-**What happened:** besides `user`/`assistant`/`system` lines, transcripts
-carry `file-history-delta` lines with file backups, plus titles and modes.
-
-**Why it's surprising:** "send the transcript" sounds like sending the
-conversation.
-
-**How to avoid:** the Claude Code parser sends only `user`, `assistant`
-and `system` lines. Check a real transcript's line types (`jq .type`)
-before adding a harness.
-
-## Codex notify passes JSON as the last argument, without a transcript path
-
-**What happened:** with `notify = ["lifestream", "capture", "codex"]`,
-Codex 0.56 appends `{"type":"agent-turn-complete","thread-id",
-"turn-id","input-messages","last-assistant-message"}` as argv, not stdin,
-and gives no transcript path or cwd. Rollouts are plain JSONL (not zstd)
-under `~/.codex/sessions/YYYY/MM/DD/rollout-*-<thread-id>.jsonl`. The
-model is only named in `turn_context` lines, and preamble messages come
-before the first one.
-
-**Why it's surprising:** every other harness hands over the transcript
-path on stdin.
-
-**How to avoid:** take hook JSON from an argument too, find the rollout by
-thread id under `$CODEX_HOME`, read cwd from `session_meta`, and carry the
-model across lines in a per-run parser.
-
-## pi's `exec` can't pass stdin; the installed pi may still be the old scope
-
-**What happened:** pi writes sessions as JSONL under
-`~/.pi/agent/sessions/--<cwd>--/`, so the extension calls the tailer.
-`pi.exec(command, args, options)` has no stdin, and the pi on this machine
-was `@mariozechner/pi-coding-agent` 0.67.6 while npm has
-`@earendil-works/*` 1.3.0.
-
-**How to avoid:** spawn with `node:child_process` to pipe the hook JSON,
-and declare the few pi types locally instead of importing them, so the
-extension loads under either scope.
-
-## A `.ts` file outside a `"type": "module"` package typechecks as CommonJS
-
-**What happened:** `agent/test` imported `capture/pi/lifestream.ts`; Node
-ran it fine (syntax detection), but `tsc` said the default export "has no
-call signatures".
-
-**How to avoid:** give the directory a `package.json` with
-`{"type": "module"}`.
-
-## Go's regexp has no lookbehind, and decoding JSON into maps reorders keys
-
-**What happened:** porting the scanner, the phone rule
-`(?<![\w+])\+...` doesn't compile in RE2. Scanning a message by decoding
-it into `map[string]any` and re-encoding would have sorted its keys, and
-`json.Decoder.Token` returns plain `io.EOF` on a truncated document.
-
-**How to avoid:** capture the preceding character as its own group and
-keep it; walk JSON token by token, rewriting string values only; reject
-input that ends with containers still open. One corpus
-(`testdata/secrets.json`) pins the TypeScript, Go and Python scanners.
 
 ## html/template treats `data-on:*` attributes as JavaScript
 
@@ -116,24 +30,12 @@ attribute, add a test that a quote can't break out. The original,
 
 ## New projections start empty on a database that already has events
 
-**What happened:** migrations add `session_messages`, `topics`,
-`member_order` and the rest as empty tables; `apply` only fills them for
-new events.
+**What happened:** migrations add projection tables (`records`, and earlier
+`topics` and `member_order`) empty; `apply` only fills them for new
+events.
 
 **How to avoid:** after deploying a migration that adds a projection,
 run `lifestream rebuild`.
-
-## Members added by a projection never pass through the agent
-
-**What happened:** session messages join their session's collections in
-Go, with no model call, so no tool call ever started the (since pruned)
-redaction of those members.
-
-**How to avoid:** per-member agent work can't hang off `label_event`
-alone. Sweep for members missing the work on a timer, and start each task
-through a ledger so the tool path, the look-back and the sweep never start
-two for one event. The redaction sweep at tag `pre-prune` is the worked
-example.
 
 ## Every non-agent event is dispatched unless excluded
 
@@ -156,8 +58,10 @@ conversation (`requestId` keeps it single); and the 1.x API changed twice
 before 1.3.0.
 
 **How to avoid:** use the Pi Durable task id (`api.taskId`) as the
-idempotency key, catch errors in phases and retry with a persisted backoff
-(`agent/src/retry.ts`), and pin the version exactly.
+idempotency key (a nested call from a script has its own), catch errors in
+phases that can fail transiently and retry with a persisted backoff (the
+old look-back's `agent/src/retry.ts`, in git before 2026-10-20), and pin
+the version exactly.
 
 ## Tests that wait on a conversation don't wait for its background tasks
 
@@ -168,14 +72,6 @@ copies an earlier test's tasks were still writing.
 
 **How to avoid:** wait for the writes themselves, and filter assertions to
 the events the test made.
-
-## Strands' message index isn't a stable sequence
-
-**What happened:** conversation managers trim `agent.messages`, so its
-index shifts and would collide `(session_id, sequence)` keys.
-
-**How to avoid:** the hook provider keeps its own counter and one session
-id per provider.
 
 ## Inherited from the go-local-app template
 
@@ -249,8 +145,8 @@ passed in code (Hugging Face's walkthrough, 2026-10-19).
 apply.
 
 **How to avoid:** everything the agent should know goes in an extension
-section or the rules doc (`agent/src/collections.ts`, `rules.ts`). A
-markdown file in the repo does not reach it.
+section or the rules doc (`agent/src/data.ts`). A markdown file in the repo
+does not reach it.
 
 ## Features threaded through later commits don't revert cleanly
 
@@ -275,18 +171,19 @@ ships so describe uses that.
 ## Tests inherit `.env` through mise
 
 **What happened:** after `.env` gained `LIFESTREAM_AGENT_URL`, `mise run
-test` sent the Strands adapter test's events to the running dev agent,
-which processed them with the real model. The test starts `lifestream
-serve` without `--agent-url`, so the server read the variable from the
-environment.
+test` sent the Strands adapter test's events (that adapter is in
+lifestream-clients now) to the running dev agent, which processed them with
+the real model. The test started `lifestream serve` without `--agent-url`,
+so the server read the variable from the environment.
 
 **Why it's surprising:** the test uses a temp data dir and random ports,
 so it looks isolated. But mise loads `.env` into every task, tests
 included, and urfave/cli flags fall back to env vars.
 
 **How to avoid:** anything a test spawns gets an environment without
-`LIFESTREAM_*` / `TWILIO_*` (see `capture/strands/tests/test_capture.py`),
-or passes every flag explicitly, as `agent/test/e2e.test.ts` does.
+`LIFESTREAM_*` / `TWILIO_*`, or passes every flag explicitly, as
+`agent/test/e2e.test.ts` does. A real-model smoke stack does the same:
+`env -i PATH=... HOME=...` plus explicit addresses.
 
 ## Traefik breaks route ties by rule length
 
@@ -358,3 +255,75 @@ reported exit code 0.
 
 **How to avoid:** tasks that tee start with `set -o pipefail;` (dev,
 dev-agent and tunnel do).
+
+## Code mode: scripts get JSON only from tools that declare an output schema
+
+**What happened:** with Pi Durable's code mode, a script calls a tool as
+`await tools.query(...)`. A tool without `structuredOutputSchema` hands the
+script its text output; one with a schema hands it the validated
+`structuredOutput`, and a failed call rejects in the script with the
+error text.
+
+**Why it's surprising:** the same tool result reads fine to the model
+either way, so the gap only shows when a script tries `r.rows`.
+
+**How to avoid:** give every tool a script calls a `structuredOutputSchema`
+and return `structuredOutput` (`agent/src/data.ts`). Mark them
+`callers: ["tools"]` so the model is offered only `codemode`. To check what
+the model is offered, read `conversation.agent(ctx).tools`: tool
+definitions travel inside the transcript, not as a field of the provider
+context a fake model sees.
+
+## A conversation keeps the model it was created with
+
+**What happened:** changing `AGENT_MODEL` from Haiku to Sonnet changed new
+conversations only; the owner's existing one is stored with its own model
+(its `pi.agent` document).
+
+**How to avoid:** compare `conversation.agent(ctx).model` to the configured
+one and `configure({model})` when they differ. `Agent.conversationFor`
+does it once per owner per process.
+
+## Background work can be a full agent: a task that owns a subagent
+
+**What happened:** the look-back was a fixed JSON judge because a
+background task can't call tools. But a task can own a conversation:
+inside `runtime.commit`, `tx.createConversation({ownership: {kind: "task",
+taskId}})` creates a child that starts as a copy of the task's
+conversation's agent (model, extensions, tools, sections). Submit the job
+to it with a fixed `requestId` and wait. The child has its own document
+scope, so it needs its own owner doc.
+
+**Why it's surprising:** `runtime.entry(id)` only sees entries visible from
+the task's own conversation, so reading the child's answer by the
+submission's `answer` id returned nothing. And the steward's prompt
+mentions "Look-back job", so a test that routes fake-model replies by that
+phrase sent every conversation down the child's path.
+
+**How to avoid:** checkpoint the child's id in the same commit that creates
+it; read its reply with `runtime.context(childId).messages`; in tests,
+match the job message's exact opening.
+
+## A capable model takes shortcuts the design didn't plan for
+
+**What happened:** given `query`, Sonnet started a collection with
+`lookback_days: 0` and backfilled in the same script, so the background
+job never ran (fine for five texts, blocking for a thousand). It also
+started a "Sleep" collection with a unit but no `kind: "metric"`, and the
+look-back child repaired it by starting a second collection.
+
+**How to avoid:** say what to leave to the background job in the prompt,
+and refuse impossible states in Go (a set with a unit is a 422) so the
+model corrects its call at once. Smoke-test prompt changes against the real
+model in a temp stack; fakes only test plumbing.
+
+## `pgrep -f` / `pkill -f` match the shell that runs them
+
+**What happened:** `pkill -f 'ngrok http ...'` and `kill $(pgrep -f
+'port-forward ...')` killed the very bash command running them (exit 144),
+three times. Separately, a smoke-test agent left on a fixed port meant the
+next run's agent failed to bind and the old one (old prompt) answered.
+
+**How to avoid:** kill by `$!`, a pid file, `pgrep -x <name>`, or
+`lsof -t -iTCP:<port> -sTCP:LISTEN`; check each fixed port is free before
+starting a stack.

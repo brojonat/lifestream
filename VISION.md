@@ -1,88 +1,120 @@
-# Lifestream: an always-on agent for your data
+# Lifestream: an event stream with a durable steward
 
-As of 2026-10-19. "Lifestream" is a placeholder name.
+As of 2026-10-20. "Lifestream" is a placeholder name.
 
 ## Summary
 
-**Send it anything; the agent files it.** Every event you feed the system
-(a text, a JSON blob, a turn of a coding session) lands in an append-only
-event store. An always-on [Pi Durable](https://earendil.com/posts/pi-durable/)
-agent receives every one of them and decides what it is: a reading to
-extract, something to file into a collection, a question for the owner, or
-just a record to keep for later. Storing is the default and costs nothing:
-the raw event is already safe before the agent sees it.
+**Send it anything; a steward makes it data.** Every event you feed the
+system (a text, a JSON blob, a turn of a coding session) lands in an
+append-only event store. An always-on agent built on
+[Pi Durable](https://earendil.com/posts/pi-durable/) receives every one of
+them and decides what it becomes: a reading in a metric, a member of a
+collection, a record of whatever shape fits, a correction to earlier data,
+a question for the owner, or nothing beyond being stored. Storing is the
+default and costs nothing: the raw event is already safe before the agent
+sees it.
 
-**Data handler first.** The agent's job is turning events into structured,
-queryable data. It doesn't sell, publish or send anything. Anything built
-on top (monetization included) comes later, as separate, explicit features
-that read the derived data. They don't get added to the agent. An earlier,
-monetization-first version of this doc is in git history; see
-[PRUNED.md](PRUNED.md).
+**The agent writes code, not tool calls.** It isn't handed a fixed menu of
+operations. It writes JavaScript that queries the whole store with
+read-only SQL and appends events, so "re-date last week's readings" or
+"start tracking sleep and file everything from the past week" is one
+script, and new kinds of data need no new code.
+
+**Data handler first.** The agent turns events into structured, queryable
+data. It doesn't sell, publish or send anything. Anything built on top
+(monetization included) comes later, as separate, explicit features that
+read the derived data. An earlier, monetization-first version of this doc
+is in git history; see [PRUNED.md](PRUNED.md).
+
+## Why an event stream into a durable harness
+
+The interesting part is the pairing: an append-only log as the ground
+truth, and a durable agent as its steward.
+
+- **The log is the source of truth; the agent never edits it.** Raw events
+  are never changed. Everything the agent does is a new derived event
+  pointing at the event that caused it, and every view (collections,
+  readings, records) is a projection rebuilt from the log. So the agent
+  can be given real power: its worst mistake is wrong events, which are
+  undone with more events, never lost data.
+- **The harness makes the agent a process, not a chat.** Pi Durable
+  checkpoints the conversation, every tool call and every script in SQLite.
+  A crash mid-script resumes where it stopped, without anyone typing
+  "continue" and without repeating a write. Each event is submitted with
+  its id as the request id, so redelivery is a no-op.
+- **Both sides are idempotent, so they compose.** The dispatcher retries
+  until the agent acknowledges; the agent's writes carry the durable task
+  id as their idempotency key, so a replayed write is stored once.
+- **Either side can be replaced.** The data is Go's. Swap the model, the
+  prompt, or Pi Durable itself, and rebuild the views from the log.
+- **History is reprocessable.** A new collection, a new rule, or a better
+  model can be pointed back at old events (the look-back), because the
+  events are all still there.
 
 ## Origin
 
 It started with a chore: typing the date and my weight into a spreadsheet
 every morning, then adding a weekly-average cell every Friday. The fix was to
 text `weight 175` to a Twilio number and let an agent file it, with a live
-dashboard instead of the spreadsheet.
+dashboard instead of the spreadsheet. It has done that since 2026-10-20.
 
 A text message is just one event from one source. Once there is an
-append-only event store with an agent reading it, weight readings, coding
-sessions and arbitrary JSON are all the same kind of thing.
+append-only event store with an agent reading it, weight readings, workouts,
+coding sessions and arbitrary JSON are all the same kind of thing.
 
 ## The event stream
 
-Every event shares one envelope and carries a free-form JSON payload. Raw
-events from the outside world are never changed. Everything the agent
-produces (labels, metric readings, questions) is a **derived event** that
-points back to its parent, so any view can be rebuilt and traced back to its
-source.
+Every event shares one envelope and carries a free-form JSON payload.
 
 | Field | Meaning |
 | --- | --- |
 | `id` | ULID: unique and sortable by time |
 | `owner` | The user the event belongs to |
-| `source` | Where it came from: `twilio.sms`, `cli`, `claude-code`, ... |
-| `type` | What it is: `message.received`, `metric.observed`, `llm.message` |
+| `source` | Where it came from: `twilio.sms`, `cli`, `dashboard`, `agent`, ... |
+| `type` | What it is: `message.received`, `metric.observed`, `record.saved` |
 | `occurred_at` / `received_at` | When it happened and when we got it |
-| `parent_id` | Set on derived events; null on raw ones |
-| `payload` | Arbitrary JSON, as large as the source sends |
+| `parent_id` | Set on derived events: what caused them |
+| `idempotency_key` | Optional; the server stores one event per owner and key |
+| `payload` | Arbitrary JSON |
 | `hash` | SHA-256 over the envelope, chained to the previous event's hash |
 
-New sources don't need schema changes. A source only has to produce the
-envelope (`POST /events`, or `lifestream push` reading JSON on stdin).
-Teaching the agent what a new `type` means is a prompt or extension change,
-not a migration.
+New sources don't need schema changes. Teaching the agent what a new `type`
+means is a prompt change or a rule, not a migration.
 
-### Capture from harnesses
+### Clients
 
-Coding-agent sessions are one stream worth capturing. Thin adapters turn a
-harness's hooks into `llm.message` events, one per message, tool call or
-result, as they happen:
+The server's contract is `POST /events` with a user token. Who pushes
+events, and at what granularity, is the client's business: the server
+knows nothing about any particular client. First-class clients (capture
+adapters for Claude Code, pi, Codex and Strands, with a secret scanner that
+masks keys before anything leaves the machine) live in their own repo,
+`lifestream-clients`. A client picks its granularity (one event per
+coding-session turn, not per message, so a session costs a few agent calls)
+and its own idempotency keys, so a resend is a no-op.
 
-- **Transcript tailers** (Claude Code, Codex): an end-of-turn hook runs
-  `lifestream capture <harness>`, which sends new transcript lines from the
-  last saved offset. The transcript file is the offline buffer.
-- **In-process extensions** (pi, Strands): send each message directly and
-  keep failed sends in memory for the next turn.
-- **Retries are safe:** the idempotency key is `(session_id, sequence)`.
-- **Store what the harness wrote:** payloads are the harness's own JSON.
-  A common format across harnesses is a derived view, rebuildable.
-- **Label the session once:** only a session's first few events reach the
-  agent; later ones join its collections by a projection rule, with no
-  model call.
-- **Off by default:** nothing is captured until `LIFESTREAM_CAPTURE=on`;
-  `LIFESTREAM_DENY` path globs always win. A deterministic secret scanner
-  masks keys and tokens before anything leaves the machine.
+## What the agent makes
 
-## Collections and steering
+- **Collections** are named sets of events, defined by plain-English
+  include and exclude rules. A **metric** collection also holds numbers
+  (readings, each with the time it was observed) and gets a chart.
+- **Records** are anything else worth keeping, in whatever shape fits: a
+  kind the agent chooses (`workout`, `meal`) and a JSON object. The agent
+  reuses the kinds and fields already in use, and when a collection comes
+  to cover something it kept as records, it moves the data.
+- **Rules** are the owner's standing instructions ("w means weight", "I'm
+  on Pacific time"), written down so every future request and every
+  background job follows them.
+- **Questions** go to a review queue on the dashboard when the agent can't
+  tell what was meant; the answer comes back as an event. The agent
+  withdraws a question that later events settle.
 
-A **collection** is a named set of events, defined by plain-English rules the
-agent applies to each incoming event. A metric (weight) is a collection
-whose members also have a number extracted, and it gets a chart.
+Readings and records can be dated by what the owner says ("176 yesterday"),
+corrected ("the 176 was 177") and withdrawn, all as new events.
 
-The owner steers collections while the system runs. Every steering command is
-itself an event, sent by text or from the dashboard:
+### Steering
+
+The owner steers collections while the system runs. Every steering command
+is itself an event, sent by text or from the dashboard:
 
 | Owner says | Event | Effect on the definition |
 | --- | --- | --- |
@@ -92,92 +124,107 @@ itself an event, sent by text or from the dashboard:
 | "stop tracking the migration" | `collection.stopped` | Status `closed`; no new labels |
 | "resume the migration one" | `collection.resumed` | Status `open` again |
 
-- **Steering changes data, not code.** Definitions live in Go; a prompt
-  section fetches the open ones before every model call, so the very next
-  event is judged under the new rules.
 - **Every label records the rule version it was made under**, so any
-  membership can be explained. The owner's fixes become `label.corrected`
-  events that go back to the agent.
-- **Starting a collection or adding an include looks back** over the last 7
-  days (configurable) in a background task; an exclude re-checks members.
+  membership can be explained. The owner's fixes on the dashboard become
+  `label.corrected` events that go back to the agent.
 - **Every rule change is in a rule log with one-click undo.**
 
 ## The agent
 
-Pi Durable is a harness, not an app: it's the building block for an
-always-on agent that survives crashes. Work is checkpointed (including tool
-calls in flight) in SQLite, and a restarted process resumes where it left
-off without anyone typing "continue". We write the gateway and the
-application around it.
+Pi Durable is a harness, not an app: the building block for an always-on
+agent that survives crashes. We write the application around it.
 
-- **One long-lived conversation per owner.** Every event is submitted into
-  it with the event id as `requestId`, so a redelivered event is never
-  processed twice. Owner commands use `whenBusy: "steer"`.
-- **Writes go only through Go's internal API**, keyed by the Pi Durable task
-  id, so a tool replayed after a crash writes nothing twice. The agent never
-  opens Go's database, and Pi Durable can be replaced without losing data.
-- **What the owner teaches lives in Go, not the conversation.** "w means
-  weight" becomes a rules-doc entry, so background tasks see it too.
-- **Large events go in as pointers;** the agent reads what it needs with
-  `read_event`.
-- **The agent never replies by text.** Questions go to a review queue on the
-  dashboard; the owner's answer is submitted back as a new event.
+- **One long-lived conversation per owner.** Every raw event is submitted
+  into it with the event id as `requestId`. Owner messages steer a busy
+  conversation; other sources queue.
+- **One tool: code mode.** The model writes JavaScript that runs in a
+  QuickJS sandbox (no network, no files), durable across restarts. Scripts
+  call two functions, and nothing else can touch data:
 
-| Extension | Handles | Tools |
-| --- | --- | --- |
-| `collections` | Steering commands, labeling, extracting metric values, look-back | `create_collection`, `amend_collection`, `stop_collection`, `resume_collection`, `label_event`, `log_value`, `flag_for_review`, `read_event` |
-| `rules` | Every event: the owner's standing instructions in the prompt | `add_rule` |
+  | Function | Does |
+  | --- | --- |
+  | `query({sql, params})` | One read-only SQL statement over the whole store (a `mode=ro`, `query_only` SQLite connection) |
+  | `append({type, parent_id, payload})` | Append one event of a type Go accepts; Go validates it against current state and refuses contradictions |
+
+- **The prompt can't drift from the code.** Before every request, sections
+  fetched from Go give the model the database schema (the real `CREATE`
+  statements), every event type it may append with its payload shape
+  (reflected from the Go structs), the open collections and the owner's
+  rules. Each section only changes when its data does, so the prompt cache
+  holds.
+- **Look-backs are background subagents.** Starting a collection or adding
+  a rule creates a background task that owns a child conversation: a copy
+  of the steward, given the job as one message ("file everything from the
+  last 7 days that belongs"). It files old events exactly as new ones are
+  filed, doesn't block the owner's next text, survives restarts, and
+  reports a one-line summary back.
+- **The model is Claude Sonnet 5.5.** In testing it handled timezones,
+  several readings in one text, invented sensible record shapes, and
+  corrected readings by id, for about a cent per text.
+- **The agent never replies by text.** Its replies are one-line summaries
+  nobody reads; its work is what it writes.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    sources[Sources<br/>SMS, capture adapters, any JSON]
+    clients[Clients<br/>SMS, lifestream-clients, any JSON]
     subgraph go [Go service]
         ingest[Ingest<br/>/twilio/sms, /events]
         store[(Event store<br/>SQLite, append-only)]
-        proj[Projections<br/>collections, metrics, rules]
+        proj[Projections<br/>collections, readings, records, rules]
+        api[Internal API<br/>query, append, schema]
         dispatch[Dispatcher]
     end
-    agent[Pi Durable agent<br/>one conversation per owner]
+    subgraph agent [Pi Durable agent]
+        conv[Conversation per owner<br/>code mode]
+        look[Look-back subagents]
+    end
     dash[Dashboard<br/>Datastar + d3]
 
-    sources --> ingest --> store --> proj --> dash
-    store --> dispatch -- every raw event --> agent
-    agent -- derived events, internal API --> store
+    clients --> ingest --> store --> proj --> dash
+    store --> dispatch -- every raw event --> conv
+    conv -- scripts --> api
+    look -- scripts --> api
+    conv -- starts --> look
+    api -- appends --> store
     dash -- corrections, answers --> store
 ```
 
 One pod: the Go service, the agent and a Litestream sidecar on a shared
-volume. One replica, since SQLite has one writer.
+volume, backing both SQLite files up to R2. One replica, since SQLite has
+one writer.
 
 ## Risks and open questions
 
 | Risk | Cheapest test |
 | --- | --- |
-| A model call per event is too expensive at volume | Run it on my own events for two weeks and read the bill; try a small or local model through pi-ai |
+| A model call per event is too expensive at volume | Read the bill after two weeks of texts; clients send coarse events; a smaller model for routine events |
 | The agent files things wrong and nobody notices | The inbox shows what every event became; count corrections per week |
+| The agent's freedom produces inconsistent data (two kinds for one thing) | The prompt says reuse kinds; query `records` by kind every week; it can migrate its own data with events |
 | Pi Durable is experimental (released 2026-10-01) | Pin it exactly; the event store is ours, so the agent can be swapped |
 
-- [ ] Which model? Haiku is the default; a local model may be enough for
-      filing.
-- [ ] Login (needed before the dashboard faces the internet).
+- [ ] Login for the dashboard (basic auth stands in).
+- [ ] `query` reads every owner's rows; fine for one user, revisit before a
+      second.
+- [ ] Live view of what the agent is doing (Pi Durable's watch API).
 - [ ] The name.
 
 ## Phasing
 
-1. **Personal tracker.** SMS and `/events` into the store, the agent
-   filing every event, metrics on a live dashboard.
+1. **Personal tracker.** SMS and `/events` into the store, the steward
+   filing every event, readings on a live dashboard.
    - *Gate:* two weeks of daily use; I stop using the spreadsheet.
-2. **My sessions, filed.** Capture adapters on for my own harnesses; the
-   agent files sessions into collections I steer.
-   - *Gate:* a month of sessions I can find and replay.
+2. **Other streams.** First-class clients push coding sessions and other
+   feeds; the steward files them into collections and records I steer.
+   - *Gate:* a month of sessions I can find and query.
 3. **Built on top, explicitly.** Whatever the data turns out to be good for
    (sharing, selling, analysis) is designed then, as features that read
    the derived data. See [PRUNED.md](PRUNED.md) for earlier attempts.
 
 ## Sources
 
-- [Pi Durable](https://earendil.com/posts/pi-durable/), Earendil, Oct 2026
+- [Pi Durable](https://earendil.com/posts/pi-durable/), Earendil, Oct 2026;
+  the `@earendil-works/pi-durable` README (code mode, subagents, tasks)
 - [Pi Durable explained](https://youtu.be/ti3vVYwzW4A), Hugging Face,
   2026-10-19: harness vs. app, conversations as sessions, storage options

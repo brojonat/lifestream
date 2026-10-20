@@ -1,11 +1,12 @@
 # TODO
 
 Read `VISION.md` first: it is the product and design spec. This list covers
-**phase 1** (the personal tracker) and the phase 2 **capture adapters**.
+**phase 1** (the personal tracker) and the agent.
 
 Status: `[ ]` open, `[x]` done, `[blocked: ...]` waiting on something,
-`[pruned]` cut on 2026-10-19 (see PRUNED.md). `(after: N)` means the task
-depends on item N.
+`[pruned]` cut on 2026-10-19, `[moved]` moved to `~/projects/lifestream-clients`
+on 2026-10-20 (both in PRUNED.md). `(after: N)` means the task depends on
+item N.
 
 **2026-10-19: refocused.** The agent is a data handler first: every event
 in, structured data out. Paid topics, artifacts, chapter order and
@@ -15,14 +16,19 @@ this file live there too.
 
 ## Next up: use it (TODO 34)
 
-**2026-10-20: live.** TODO 33 is done: texts to +1 567-399-1269 reach
-`https://lifestream.brojonat.com`, Haiku 5.5 files them, the dashboard
-charts them (README "Deploy"). The first real run filed "Weight 174.4"
-correctly, including by look-back when the collection came after the
-reading.
+**2026-10-20: live, and the agent is a steward.** Texts to +1 567-399-1269
+reach `https://lifestream.brojonat.com`. The agent (Sonnet 5.5) writes code
+against the store: it queries with read-only SQL and appends events, keeps
+records of any shape, dates and corrects readings, and backfills new
+collections through background subagents (VISION.md "The agent").
+Smoke-tested against the real model in a temp stack (timezones, two
+readings per text, a workout record, corrections, a sleep look-back) at
+about a cent per text.
 
-- [ ] 34. Two weeks of daily texts, no spreadsheet (the phase 1 gate, below).
+- [ ] 34. Two weeks of daily texts, no spreadsheet (the phase 1 gate, below). Text more than weight (workouts, meals, sleep) to see what records the steward invents.
 - [ ] F3. Click through the inbox, collections, rules and log pages on the phone with real data.
+- [ ] 37. Weekly check while 34 runs: `SELECT kind, count(*) FROM records GROUP BY kind` for duplicate kinds, corrections per week, and the model bill (Anthropic console). If kinds drift, tighten the prompt or add a rule.
+- [ ] 38. Show records on the dashboard: today they only appear as chips in the inbox. A page per kind, a table from the JSON, and a chart when a field is numeric. (after: 34)
 - [ ] 36. Restart k3s on `firekeeper` before 2027-02-15, when its control-plane certs expire (the node warns `CertificateExpirationWarning`; a restart rotates them). Then check the local kubeconfig still works.
 
 ## Decisions already made (don't re-litigate)
@@ -44,8 +50,19 @@ reading.
 - The agent is a data handler first (2026-10-19): it files every event and
   never sells, publishes or sends. Monetization comes later as explicit
   features that read derived data, never as agent behavior.
-- The agent runs on Haiku 5.5 (`anthropic/claude-haiku-5-5`, the code
-  default; was D2, 2026-10-20). About $0.0001–0.0004 per text.
+- The agent acts through Pi Durable's code mode, not bespoke tools
+  (2026-10-20): scripts call `query` (read-only SQL over the whole store)
+  and `append` (any event type Go accepts). Writes stay events, so they're
+  traced, idempotent and reversible. The prompt is built from Go's schema.
+- The agent runs on Sonnet 5.5 (`anthropic/claude-sonnet-5-5`, the code
+  default; D2, 2026-10-20). About a cent per text; cheap next to the work.
+- Look-backs are background subagents: a copy of the steward given the job
+  as one message, never a fixed judge (2026-10-20).
+- Clients aren't the server's concern (2026-10-20): the contract is
+  `POST /events`; clients choose their granularity and idempotency keys.
+  First-class clients live in `~/projects/lifestream-clients`.
+- Single user for now; multi-tenancy isn't a goal. `query` reads every
+  owner's rows, which is fine until a second user exists.
 - Prod lives on the `firekeeper` k3s cluster as `lifestream.brojonat.com`;
   the dashboard is public behind basic auth until login (D1), not on the
   tailnet (2026-10-20).
@@ -53,7 +70,7 @@ reading.
 ## Open decisions (ask the user)
 
 - [ ] D1. Login for the dashboard: Google OAuth, email magic link, or passkeys? Hellō (hello.coop) is a candidate. Traefik basic auth stands in until then.
-- [x] D2. Model: Haiku 5.5 (see "Decisions already made").
+- [x] D2. Model: Sonnet 5.5 (see "Decisions already made"); Haiku 5.5 ran the first day.
 - [ ] D3. Product name ("Lifestream" is a placeholder; repo dir is `tracker`).
 
 ## Bootstrap
@@ -94,6 +111,10 @@ reading.
 - [x] 22. `rules` extension: prompt section from a per-owner rules doc editable on the dashboard. (after: 19)
 - [x] 23a. Large events as pointers: the dispatcher submits `{id, type, title, url, size}` instead of the payload above a size threshold. (after: 15, 20)
 - [x] 23. Fake model provider for tests, so the agent's flows run in CI without API calls. (after: 17)
+- [x] 39. Readings are fully editable: several per event, `observed_at` from what the owner says, `replaces` and `metric.removed` for corrections. (2026-10-20)
+- [x] 40. The steward: code mode with `query` and `append` replaces the tools of 19 and 22; `/api/query` (read-only connection), `/api/schema` (payload shapes reflected from the Go structs); the model moves to `AGENT_MODEL` on its next event. (2026-10-20)
+- [x] 41. Records: `record.saved` / `record.removed`, a kind plus a JSON object, in the `records` projection, shown in the inbox. (2026-10-20)
+- [x] 42. Look-back as a background subagent (replaces the judge of 20); `review.withdrawn`; a set collection with a unit is refused. (2026-10-20)
 
 ## Dashboard (Go + Datastar + Rocket)
 
@@ -104,7 +125,8 @@ reading.
 - [x] 28. Rule log with undo for every steering command; review queue where answers become events submitted to the agent. (after: 27)
 - [x] 29. Rules doc editor for the `rules` extension. (after: 22)
 - [x] 30. Font size 16px on all inputs (iOS zoom), works at phone width.
-- [ ] 35. Live agent panel: what the agent is doing right now (the event it's on, streamed thinking/text, tool calls with their output, queued inputs) and running model cost. Pi Durable's `conversation.watch()` (or the experimental `watchEvents()`) on the agent, streamed over a new endpoint on its loopback API; Go relays it to the dashboard's SSE stream, since only Go is reachable. Cost from the view's `docs["pi.usage"]`. See the pi-durable README "Watching a Conversation" and "Agent Events". (after: 25)
+- [x] 30a. Times in the viewer's timezone (`<local-time>`, chart in local time); the inbox shows what a correction changed. (2026-10-20)
+- [ ] 35. Live agent panel: what the agent is doing right now (the event it's on, streamed thinking/text, the script it's running and its nested calls, running look-back subagents, queued inputs) and running model cost. Pi Durable's `conversation.watch()` (or the experimental `watchEvents()`) on the agent, streamed over a new endpoint on its loopback API; Go relays it to the dashboard's SSE stream, since only Go is reachable. Cost from the view's `docs["pi.usage"]`. See the pi-durable README "Watching a Conversation" and "Agent Events". (after: 25)
 
 ## Production basics
 
@@ -115,27 +137,18 @@ reading.
 
 ## Follow-ups found 2026-10-17
 
-- [ ] F1. Run the pi extension (`capture/pi/lifestream.ts`) inside a live pi and check a turn reaches the server; so far only tested with a fake pi.
-- [ ] F2. Install the Claude Code plugin and check a real Stop hook sends a turn.
+- [moved] F1. Run the pi extension inside a live pi (lifestream-clients TODO 3).
+- [moved] F2. Install the Claude Code plugin and check a real Stop hook (lifestream-clients TODO 4).
 - [ ] F3. Click through the inbox, collections, rules and log pages in a browser with real data; so far only handler tests. Now possible in prod (see "Next up"). (after: 33)
 
 ## Phase 1 exit gate
 
-- [ ] 34. Two weeks of daily texts with no spreadsheet. Then update VISION.md and start phase 2 (my sessions, filed).
+- [ ] 34. Two weeks of daily texts with no spreadsheet. Then update VISION.md and start phase 2 (other streams through first-class clients).
 
-## Capture adapters (phase 2, see VISION.md "Capture from harnesses")
+## Capture adapters
 
-Events stream as they happen (`llm.message`, with `session_id` and
-sequence); a session is the events sharing a `session_id`. Payloads are the
-harness's own JSON, unchanged. Config is env vars only (`LIFESTREAM_URL`,
-`LIFESTREAM_TOKEN`, `LIFESTREAM_CAPTURE`, `LIFESTREAM_DENY`). Capture is off
-by default: nothing is sent unless `LIFESTREAM_CAPTURE=on`.
-
-- [x] C0. Session handling in Go: `POST /events` accepts a batch (JSON array or JSONL); `llm.message` events keyed by `(session_id, sequence)` for idempotency; projection rule so later events of a labeled session join its collections without a model call; the dispatcher submits only a session's first events to the agent. (after: 11, 13)
-- [x] C1. `lifestream capture <harness>`: reads hook JSON on stdin, exits quietly unless `LIFESTREAM_CAPTURE=on`, skips `cwd` matching `LIFESTREAM_DENY`, reads the transcript from the saved offset (one offset file per session under `~/.local/state/lifestream/`), adds harness, model, `cwd` and git remote/branch/commit, sends the batch, then advances the offset. Per-harness line parsers plug in. Test: kill it mid-send, rerun, no duplicates and nothing missing. (after: C0)
-- [x] C2. Claude Code: line parser plus a plugin that registers `lifestream capture claude-code` on `Stop` and `SessionEnd`. Fixture: a recorded transcript and hook inputs. (after: C1)
-- [x] C3. pi: TypeScript extension on `turn_end` (and `session_start` to open the session) that POSTs the turn's message and tool results (only when `LIFESTREAM_CAPTURE=on`), keeping failed sends in memory for the next turn. First check whether pi writes session files; if it does, call the tailer from C1 instead. Learn pi's hooks while doing 16. (after: C0)
-- [x] C4. Strands: Python `HookProvider` on `MessageAddedEvent` that POSTs each message, same capture switch and retry rule as C3. (after: C0)
-- [x] C5. Codex: line parser for rollout files; register `lifestream capture codex` as the end-of-turn hook or notify program. Check whether rollout files are zstd-compressed; if so, re-read and skip lines already sent. (after: C1)
-- [x] C6. Optional deterministic secret scan before sending, in C1 (Go) and in C3/C4. One shared test corpus of fake keys and tokens, used by these. (after: C1, C3)
-- [x] C7. Derived common-format view of sessions across harnesses (for the replay viewer), rebuildable from the raw events. (after: C2, C3)
+[moved] C0–C7 (session handling in the server, the capture CLI, the Claude
+Code, pi, Strands and Codex adapters, the secret scanners, the
+common-format view) were done by 2026-10-17. On 2026-10-20 the adapters
+moved to `~/projects/lifestream-clients` (its TODO 1: one event per turn)
+and the server-side session handling was removed; PRUNED.md has the map.

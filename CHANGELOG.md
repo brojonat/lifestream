@@ -4,6 +4,53 @@ All notable changes to this project are recorded here, newest first. The
 format follows [Keep a Changelog](https://keepachangelog.com/). Entries are
 grouped by date; nothing is versioned yet.
 
+## 2026-10-20, later: the agent becomes a steward
+
+### Added
+
+- The agent acts through Pi Durable's code mode: the model writes
+  JavaScript (QuickJS sandbox, durable across restarts) that calls `query`
+  (one read-only SQL statement over the whole store, `POST /api/query` on a
+  `mode=ro`, `query_only` connection) and `append` (any event type Go
+  accepts). `GET /api/schema` gives the tables and the appendable event
+  types with payload shapes reflected from the Go structs; the prompt is
+  built from it.
+- Records: `record.saved` / `record.removed` keep data of any shape (a kind
+  plus a JSON object) in a `records` projection, shown in the inbox.
+- Readings are fully editable: any number per event, `observed_at` from what
+  the owner says, `replaces` to supersede one and `metric.removed` to
+  withdraw one. `GET /api/collections/{id}/values`.
+- `review.withdrawn`: the agent takes back a question later events settled.
+- `<local-time>`: dashboard times in the viewer's timezone; the chart uses
+  local time. The inbox says what a correction changed.
+- TODO 37 (weekly check on record kinds, corrections and cost) and 38
+  (records on the dashboard).
+
+### Changed
+
+- Model default is `anthropic/claude-sonnet-5-5`; an existing conversation
+  moves to `AGENT_MODEL` on its next event.
+- Look-backs run as background subagents: a task owns a child conversation
+  that starts as a copy of the steward and gets the job as one message, so
+  old events are filed like new ones. It reports back a one-line summary.
+- A set collection with a unit or metric is refused (422).
+- The prompt leaves backfills to the look-back and has it clean up records
+  and questions a new collection settles.
+- VISION.md rewritten around the event stream and its durable steward;
+  README, TODO and LEARNINGS updated to match.
+
+### Removed
+
+- The agent's twelve bespoke tools (`label_event`, `log_value`,
+  `add_rule`, ...) and the look-back's fixed JSON judge and retry helpers.
+- The capture clients: adapters, `lifestream capture`, secret scanners and
+  fixtures moved to `~/projects/lifestream-clients`.
+- Server-side sessions: `llm.message` is an ordinary event; no
+  `(session_id, sequence)` keys, session-head dispatch, session projections
+  or `lifestream sessions`. A migration drops `session_events` and
+  `session_messages`. Clients send their own `idempotency_key`. See
+  PRUNED.md.
+
 ## 2026-10-20
 
 ### Added
