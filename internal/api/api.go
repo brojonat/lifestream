@@ -14,19 +14,13 @@ import (
 	"github.com/brojonat/lifestream/internal/store"
 )
 
-// DerivedTypes are the event types the agent may append.
-var DerivedTypes = map[string]bool{
-	store.TypeCollectionStarted: true,
-	store.TypeCollectionAmended: true,
-	store.TypeCollectionStopped: true,
-	store.TypeCollectionResumed: true,
-	store.TypeLabelApplied:      true,
-	store.TypeLabelRemoved:      true,
-	store.TypeMetricObserved:    true,
-	store.TypeMetricRemoved:     true,
-	store.TypeRuleAdded:         true, // removing one is the owner's call, on the dashboard
-	"review.flagged":            true,
-}
+// DerivedTypes are the event types the agent may append: the ones
+// store.EventDocs describes. Removing a rule isn't one; that's the owner's
+// call, on the dashboard.
+var DerivedTypes = store.AgentEventTypes()
+
+// MaxQueryRows caps one query's rows.
+const MaxQueryRows = 1000
 
 // DefaultMaxPayload is how large a payload can be before list responses
 // replace it with its size; the agent reads big ones with GET
@@ -46,6 +40,8 @@ func NewHandler(st *store.Store, log *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /api/events/{id}", h.event)
 	mux.HandleFunc("GET /api/events/{id}/children", h.children)
 	mux.HandleFunc("POST /api/events", h.appendEvent)
+	mux.HandleFunc("POST /api/query", h.query)
+	mux.HandleFunc("GET /api/schema", h.schema)
 	return mux
 }
 
@@ -122,6 +118,45 @@ func (h *handler) values(w http.ResponseWriter, r *http.Request) {
 		vs = []store.MetricValue{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"values": vs})
+}
+
+// POST /api/query {"sql", "params": [], "limit": 200}: one read-only
+// statement over the whole database. 400 when SQLite refuses it.
+func (h *handler) query(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SQL    string `json:"sql"`
+		Params []any  `json:"params"`
+		Limit  int    `json:"limit"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil || req.SQL == "" {
+		writeError(w, http.StatusBadRequest, "want {sql, params?, limit?}")
+		return
+	}
+	if req.Limit <= 0 {
+		req.Limit = 200
+	}
+	res, err := h.st.Query(r.Context(), req.SQL, req.Params, min(req.Limit, MaxQueryRows))
+	var qe *store.QueryError
+	if errors.As(err, &qe) {
+		writeError(w, http.StatusBadRequest, qe.Error())
+		return
+	}
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// GET /api/schema: the tables (CREATE statements) and the event types the
+// agent may append, with their payloads. The agent's prompt is built from it.
+func (h *handler) schema(w http.ResponseWriter, r *http.Request) {
+	tables, err := h.st.Schema(r.Context())
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tables": tables, "events": store.EventDocs()})
 }
 
 // Summary is an event in a list: the envelope, the payload's size, and the

@@ -13,6 +13,14 @@ type InboxItem struct {
 	Derived   []Event       // events whose parent is this one, oldest first
 	Members   []Membership  // collections it is currently in
 	Values    []MetricValue // numbers extracted from it
+	Records   []Record      // records kept from it
+}
+
+// Record is one record.saved, as the records projection holds it.
+type Record struct {
+	EventID string
+	Kind    string
+	Data    string // a JSON object
 }
 
 // Membership names a collection an event belongs to.
@@ -87,6 +95,22 @@ func (s *Store) Inbox(ctx context.Context, owner string, limit int) ([]InboxItem
 		index[v.SourceEventID].Values = append(index[v.SourceEventID].Values, v)
 	}
 	vrows.Close()
+
+	rrows, err := s.db.QueryContext(ctx, `SELECT event_id, source_event_id, kind, data FROM records
+		WHERE source_event_id IN `+in+` ORDER BY event_id`, ids...)
+	if err != nil {
+		return nil, fmt.Errorf("reading records: %w", err)
+	}
+	for rrows.Next() {
+		var r Record
+		var src string
+		if err := rrows.Scan(&r.EventID, &src, &r.Kind, &r.Data); err != nil {
+			rrows.Close()
+			return nil, fmt.Errorf("reading records: %w", err)
+		}
+		index[src].Records = append(index[src].Records, r)
+	}
+	rrows.Close()
 
 	rows, err = s.db.QueryContext(ctx, `SELECT event_id FROM deliveries WHERE event_id IN `+in, ids...)
 	if err != nil {

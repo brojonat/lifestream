@@ -19,6 +19,7 @@
   <td class="text">{{trunc 280 .Text}}</td>
   <td class="became">{{range .Labels}}<span class="chip" title="{{.Reason}}">{{.Name}}</span>{{end}}
       {{range .Values}}<span class="chip">{{.}}</span>{{end}}
+      {{range .Records}}<span class="chip" title="{{.Data}}">{{.Kind}}</span>{{end}}
       {{range .Changes}}<div class="muted">{{.}}</div>{{end}}
       {{range .Flags}}<div>⚠ {{.}}</div>{{end}}
       {{if $.Open}}<details class="add"><summary>add to…</summary>

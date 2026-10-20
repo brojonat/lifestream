@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -210,5 +211,24 @@ func TestSessionsThroughTheAPI(t *testing.T) {
 		"payload": map[string]any{"event_id": msgs[0].ID, "collection_id": cid, "definition_version": 1, "reason": "x"}}))
 	if code != 201 {
 		t.Fatalf("label: %d", code)
+	}
+}
+
+func TestQueryAndSchema(t *testing.T) {
+	e := setup(t)
+	e.raw(`{"Body":"weight 175"}`)
+	code, out := e.do("POST", "/api/query", `{"sql":"SELECT type, json_extract(payload, '$.Body') AS body FROM events WHERE owner = ?","params":["`+e.owner+`"]}`)
+	if code != 200 || fmt.Sprint(out["columns"]) != "[type body]" || fmt.Sprint(out["rows"]) != "[[message.received weight 175]]" {
+		t.Fatalf("query: %d %v", code, out)
+	}
+	if code, out := e.do("POST", "/api/query", `{"sql":"DELETE FROM events"}`); code != 400 || !strings.Contains(fmt.Sprint(out["error"]), "query:") {
+		t.Fatalf("a write: %d %v", code, out)
+	}
+	if code, _ := e.do("POST", "/api/query", `{}`); code != 400 {
+		t.Fatalf("no sql: %d", code)
+	}
+	code, out = e.do("GET", "/api/schema", "")
+	if code != 200 || !strings.Contains(fmt.Sprint(out["tables"]), "CREATE TABLE records") || len(out["events"].([]any)) != len(DerivedTypes) {
+		t.Fatalf("schema: %d %v", code, out)
 	}
 }

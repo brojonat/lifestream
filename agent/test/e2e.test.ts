@@ -50,6 +50,9 @@ const eventId = (context: { messages: { role: string; content: unknown }[] }) =>
 
 type Responses = Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0];
 
+/** A model turn that runs one code mode script. */
+const script = (code: string) => fauxAssistantMessage([fauxToolCall("codemode", { code })], { stopReason: "toolUse" });
+
 /** Go (real binary, its own data dir) plus this agent with a faux model, wired as in the pod. */
 async function stack(responses: Responses) {
 	const dir = await mkdtemp(join(tmpdir(), "lifestream-e2e-"));
@@ -86,24 +89,24 @@ async function stack(responses: Responses) {
 const skip = !existsSync(BIN) && "build ../bin/lifestream first";
 
 test("text 'weight 175' end to end", { skip }, async () => {
-	let collectionId = "";
 	const s = await stack([
-		(c) => fauxAssistantMessage([fauxToolCall("create_collection", { event_id: eventId(c), name: "weight", kind: "metric", unit: "lb", include: "body weight readings", lookback_days: 0 })], { stopReason: "toolUse" }), // look-back has its own test
+		// look-back has its own test
+		(c) => script(`await tools.append({ type: "collection.started", parent_id: "${eventId(c)}", payload: { name: "weight", kind: "metric", unit: "lb", include: "body weight readings", lookback_days: 0 } })`),
 		fauxAssistantMessage([fauxText("started")]),
-		(c) => {
-			const id = eventId(c);
-			return fauxAssistantMessage([
-				fauxToolCall("label_event", { event_id: id, collection_id: collectionId, definition_version: 1, reason: "weight" }),
-				fauxToolCall("log_value", { event_id: id, collection_id: collectionId, value: 175 }),
-			], { stopReason: "toolUse" });
-		},
+		// The script finds the collection with real SQL, files the reading and keeps a record.
+		(c) => script(`
+			const id = "${eventId(c)}";
+			const [[cid, version]] = (await tools.query({ sql: "SELECT id, version FROM collections WHERE name = ?", params: ["weight"] })).rows;
+			await tools.append({ type: "label.applied", parent_id: id, payload: { event_id: id, collection_id: cid, definition_version: version, reason: "weight" } });
+			await tools.append({ type: "metric.observed", parent_id: id, payload: { collection_id: cid, value: 175 } });
+			await tools.append({ type: "record.saved", parent_id: id, payload: { kind: "mood", data: { felt: "good" } } });
+		`),
 		fauxAssistantMessage([fauxText("filed")]),
 	]);
 	const sms = (body: string) => s.push(JSON.stringify({ type: "message.received", source: "twilio.sms", payload: { Body: body, From: "+15555550100" } }));
 	try {
 		assert.equal((await sms("track my weight")).status, 200);
 		const weight = await until("collection", async () => (await s.api.collections(s.user.id)).find((c) => c.name === "weight"));
-		collectionId = weight.id;
 		await (await s.agent.conversationFor(s.user.id, ctx)).waitForIdle(ctx);
 
 		assert.equal((await sms("weight 175")).status, 200);
@@ -112,6 +115,8 @@ test("text 'weight 175' end to end", { skip }, async () => {
 			return members.length === 1 ? members : undefined;
 		});
 		assert.equal(members.length, 1);
+		const records = await s.api.query("SELECT kind, json_extract(data, '$.felt') FROM records WHERE owner = ?", [s.user.id]);
+		assert.deepEqual(records.rows, [["mood", "good"]]);
 
 		// The dashboard shows the reading.
 		await until("dashboard", async () => {
@@ -139,10 +144,11 @@ test("a captured session: its head is judged, the rest join without the model", 
 		const text = JSON.stringify(last.content);
 		seen.push(eventId(c));
 		if (text.includes("track the migration")) {
-			return fauxAssistantMessage([fauxToolCall("create_collection", { event_id: eventId(c), name: "pg migration", include: "work on the postgres migration", lookback_days: 0 })], { stopReason: "toolUse" });
+			return script(`await tools.append({ type: "collection.started", parent_id: "${eventId(c)}", payload: { name: "pg migration", include: "work on the postgres migration", lookback_days: 0 } })`);
 		}
 		if (text.includes("upgrade postgres")) {
-			return fauxAssistantMessage([fauxToolCall("label_event", { event_id: eventId(c), collection_id: collectionId, definition_version: 1, reason: "migration session" })], { stopReason: "toolUse" });
+			const id = eventId(c);
+			return script(`await tools.append({ type: "label.applied", parent_id: "${id}", payload: { event_id: "${id}", collection_id: "${collectionId}", definition_version: 1, reason: "migration session" } })`);
 		}
 		return fauxAssistantMessage([fauxText("nothing to file")]);
 	};

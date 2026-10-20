@@ -4,12 +4,13 @@
 
 import type { Context } from "@earendil-works/chord/context";
 import type { Models } from "@earendil-works/pi-ai/models";
+import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { type Conversation, type ConversationId, configure, createRegistry, defineDoc, Harness } from "@earendil-works/pi-durable";
+import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { collectionsExtension, OwnerDoc } from "./collections.ts";
+import { dataExtension, OwnerDoc } from "./data.ts";
 import type { GoApi, StoredEvent } from "./goapi.ts";
 import type { LookBackOptions } from "./lookback.ts";
-import { rulesExtension } from "./rules.ts";
 
 /** owner -> conversation id; conversations have no keys of their own. */
 const Owners = defineDoc<{ byOwner: Record<string, number> }>({
@@ -19,7 +20,7 @@ const Owners = defineDoc<{ byOwner: Record<string, number> }>({
 	initial: () => ({ byOwner: {} }),
 });
 
-/** Payloads bigger than this reach the model as a pointer (read_event fetches them). */
+/** Payloads bigger than this reach the model as a pointer (a query reads them). */
 export const POINTER_BYTES = 4096;
 
 /** Sources whose events are the owner talking; they steer a busy conversation. */
@@ -37,24 +38,31 @@ export type AgentOptions = {
 
 export class Agent {
 	readonly #harness: Harness;
+	readonly #sandbox: CodemodeSandbox;
 	readonly #model: AgentOptions["model"];
+	/** Owners whose conversation runs on #model, checked once per process. */
+	readonly #current = new Set<string>();
 
-	private constructor(harness: Harness, model: AgentOptions["model"]) {
+	private constructor(harness: Harness, sandbox: CodemodeSandbox, model: AgentOptions["model"]) {
 		this.#harness = harness;
+		this.#sandbox = sandbox;
 		this.#model = model;
 	}
 
 	static async open(opts: AgentOptions, ctx: Context): Promise<Agent> {
+		// The model writes scripts; query and append are callable only from
+		// them (callers: ["tools"]), so code mode is the one tool it's offered.
+		const sandbox = new CodemodeSandbox({ memoryLimitBytes: 128 * 1024 * 1024 });
 		const registry = createRegistry();
-		registry.install(collectionsExtension(opts.api, { lookBack: opts.lookBack }));
-		registry.install(rulesExtension(opts.api));
+		registry.install(dataExtension(opts.api, { lookBack: opts.lookBack }));
+		registry.install(createCodemodeExtension({ sandbox, models: false }));
 		const harness = await Harness.open(
 			await openNodeSqliteStorage(opts.storagePath),
 			{ models: opts.models, registry, onReport: opts.onReport },
 			ctx,
 		);
 		harness.resume(); // finish work the last process left behind
-		return new Agent(harness, opts.model);
+		return new Agent(harness, sandbox, opts.model);
 	}
 
 	/** Resolves if the harness fails; the host should exit and be restarted. */
@@ -77,6 +85,13 @@ export class Agent {
 		}, ctx);
 		const conv = await this.#harness.conversation(id, ctx);
 		if (!conv) throw new Error(`conversation ${id} for owner ${owner} vanished`);
+		// A conversation keeps the model it was created with; move it when
+		// AGENT_MODEL changes.
+		if (!this.#current.has(owner)) {
+			const { model } = await conv.agent(ctx);
+			if (model?.provider !== this.#model.provider || model?.modelId !== this.#model.modelId) await conv.configure({ model: this.#model }, ctx);
+			this.#current.add(owner);
+		}
 		return conv;
 	}
 
@@ -96,6 +111,7 @@ export class Agent {
 
 	async close(ctx: Context) {
 		await this.#harness.close(ctx);
+		await this.#sandbox.close();
 	}
 }
 
@@ -105,7 +121,7 @@ export function describe(e: StoredEvent): string {
 	const payload = JSON.stringify(e.payload ?? null);
 	if (payload.length > POINTER_BYTES) {
 		const title = (e.payload as { title?: unknown } | null)?.title;
-		return `${head}\nPayload is ${payload.length} bytes${typeof title === "string" ? `, title ${JSON.stringify(title)}` : ""}. Use read_event to see it.`;
+		return `${head}\nPayload is ${payload.length} bytes${typeof title === "string" ? `, title ${JSON.stringify(title)}` : ""}. Query it to read it.`;
 	}
 	return `${head}\n${payload}`;
 }

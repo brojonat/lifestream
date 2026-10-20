@@ -1,6 +1,8 @@
 // Client for the Go service's internal API. This is the agent's only way to
 // read or write data; it never opens Go's database.
 
+import type { JsonValue } from "@earendil-works/chord";
+
 export type Rule = { kind: "include" | "exclude"; text: string; version: number };
 
 export type Collection = {
@@ -17,9 +19,6 @@ export type Collection = {
 
 export type OwnerRule = { id: string; text: string; source: string };
 
-/** One number in a metric collection. `event_id` is its metric.observed event: the id to replace or remove it by. */
-export type MetricValue = { event_id: string; collection_id: string; source_event_id: string; value: number; unit: string; observed_at: string };
-
 export type StoredEvent = {
 	seq?: number;
 	id: string;
@@ -31,7 +30,12 @@ export type StoredEvent = {
 	payload: unknown;
 };
 
-/** A non-2xx answer from the Go API. `status` 422 means the event contradicts current state. */
+/** What a read-only query returned; `truncated` means rows were cut at the limit. */
+export type QueryResult = { columns: string[]; rows: JsonValue[][]; truncated: boolean };
+
+/** The database as CREATE statements, and the event types the agent may append. */
+export type Schema = { tables: string; events: { type: string; payload: string; does: string }[] };
+
 export class ApiError extends Error {
 	readonly status: number;
 	constructor(status: number, message: string) {
@@ -87,11 +91,13 @@ export class GoApi {
 		return body.members;
 	}
 
-	/** A metric collection's values observed at or after `since`, oldest first. */
-	async values(collectionId: string, since?: string): Promise<MetricValue[]> {
-		const q = since ? `?${new URLSearchParams({ since })}` : "";
-		const body = (await this.#request("GET", `/api/collections/${encodeURIComponent(collectionId)}/values${q}`)) as { values: MetricValue[] };
-		return body.values;
+	/** One read-only SQL statement over the whole store. A 400 means SQLite refused it. */
+	async query(sql: string, params: unknown[] = [], limit?: number): Promise<QueryResult> {
+		return (await this.#request("POST", "/api/query", { sql, params, limit })) as QueryResult;
+	}
+
+	async schema(): Promise<Schema> {
+		return (await this.#request("GET", "/api/schema")) as Schema;
 	}
 
 	/** One event; with offset/limit, a byte range of its payload as `data`. */

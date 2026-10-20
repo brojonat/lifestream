@@ -156,6 +156,7 @@ func TestInboxPage(t *testing.T) {
 	val := w.add(store.SourceAgent, store.TypeMetricObserved, typo.ID, now, store.MetricObserved{CollectionID: weight.ID, Value: &v})
 	fix := w.add("twilio.sms", "message.received", "", now, map[string]string{"Body": "drop the 1750, typo"})
 	w.add(store.SourceAgent, store.TypeMetricRemoved, fix.ID, now, store.MetricRemoved{ValueID: val.ID, Reason: "typo"})
+	w.add(store.SourceAgent, store.TypeRecordSaved, fix.ID, now, store.RecordSaved{Kind: "mood", Data: json.RawMessage(`{"felt":"sheepish"}`)})
 	for _, e := range []store.Event{filed, unclear, ignored, typo, fix} {
 		st.MarkDelivered(ctx, e.ID)
 	}
@@ -168,6 +169,7 @@ func TestInboxPage(t *testing.T) {
 		`<tr class="ignored">`, "&lt;b&gt;hello&lt;/b&gt;",
 		`<tr class="waiting">`, "waiting for agent",
 		`<div class="muted">removed a value: typo</div>`,
+		`<span class="chip" title="{&#34;felt&#34;:&#34;sheepish&#34;}">mood</span>`,
 		`<local-time relative datetime="`,
 	} {
 		if !strings.Contains(body, want) {

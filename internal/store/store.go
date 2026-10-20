@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"sync"
@@ -137,12 +138,25 @@ var migrations = []string{
 		occurred_at TEXT NOT NULL
 	);
 	CREATE INDEX session_messages_session ON session_messages(owner, session_id, sequence);`,
+
+	// Records: data of any shape the agent decides to keep (a workout, a
+	// meal), one row per record.saved, queried with json_extract.
+	`CREATE TABLE records (
+		event_id        TEXT PRIMARY KEY, -- the record.saved event
+		owner           TEXT NOT NULL,
+		kind            TEXT NOT NULL,
+		source_event_id TEXT,
+		data            TEXT NOT NULL, -- a JSON object
+		observed_at     TEXT NOT NULL
+	);
+	CREATE INDEX records_owner_kind ON records(owner, kind, observed_at);`,
 }
 
 // Store is the open database. Writes are serialized by mu so the hash chain
 // is read and extended atomically; SQLite would serialize them anyway.
 type Store struct {
 	db *sql.DB
+	ro *sql.DB // read-only, for Query: the agent's SQL can't write
 
 	mu      sync.Mutex
 	changed chan struct{}          // closed and replaced on every append
@@ -165,11 +179,20 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	ro := url.Values{}
+	for _, p := range []string{"busy_timeout(5000)", "query_only(1)"} {
+		ro.Add("_pragma", p)
+	}
+	ro.Set("mode", "ro")
+	if s.ro, err = sql.Open("sqlite", "file:"+path+"?"+ro.Encode()); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("opening %s read-only: %w", path, err)
+	}
 	return s, nil
 }
 
 // Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error { return errors.Join(s.ro.Close(), s.db.Close()) }
 
 func (s *Store) migrate(ctx context.Context) error {
 	var version int

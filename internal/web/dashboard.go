@@ -162,6 +162,7 @@ type inboxRow struct {
 	Status  string // waiting, filed, flagged, ignored
 	Labels  []store.Membership
 	Values  []string
+	Records []store.Record
 	Changes []string // what a correction did to earlier data
 	Flags   []string
 }
@@ -202,7 +203,7 @@ func (s *Server) inboxView(r *http.Request) (any, error) {
 
 func buildRow(it store.InboxItem) inboxRow {
 	e := it.Event
-	row := inboxRow{ID: e.ID, At: e.OccurredAt, Source: e.Source, Text: eventText(e), Labels: it.Members}
+	row := inboxRow{ID: e.ID, At: e.OccurredAt, Source: e.Source, Text: eventText(e), Labels: it.Members, Records: it.Records}
 	for _, v := range it.Values {
 		row.Values = append(row.Values, strings.TrimSpace(num(v.Value)+" "+v.Unit))
 	}
@@ -215,15 +216,16 @@ func buildRow(it store.InboxItem) inboxRow {
 			}
 			json.Unmarshal(d.Payload, &p)
 			row.Flags = append(row.Flags, firstNonEmpty(p.Question, p.Reason, "needs review"))
-		case store.TypeMetricRemoved, store.TypeLabelRemoved:
+		case store.TypeMetricRemoved, store.TypeLabelRemoved, store.TypeRecordRemoved:
 			var p struct {
 				Reason string `json:"reason"`
 			}
 			json.Unmarshal(d.Payload, &p)
-			what := "removed a value"
-			if d.Type == store.TypeLabelRemoved {
-				what = "took an event out of a collection"
-			}
+			what := map[string]string{
+				store.TypeMetricRemoved: "removed a value",
+				store.TypeLabelRemoved:  "took an event out of a collection",
+				store.TypeRecordRemoved: "removed a record",
+			}[d.Type]
 			row.Changes = append(row.Changes, strings.TrimSuffix(what+": "+p.Reason, ": "))
 		}
 	}

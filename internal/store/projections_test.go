@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -349,5 +350,84 @@ func TestLabelRemoved(t *testing.T) {
 	f.must(TypeLabelRemoved, ids["m0"], LabelRemoved{EventID: ids["m0"], CollectionID: w, DefinitionVersion: 3, Reason: "the dog's weight"})
 	if ms, _ := f.s.Members(ctx, w); len(ms) != 1 || ms[0].EventID != ids["m2"] {
 		t.Fatalf("members: %+v", ms)
+	}
+}
+
+func TestRecords(t *testing.T) {
+	ctx := context.Background()
+	f, _ := weightStory(t)
+	sent := time.Date(2026, 10, 20, 16, 0, 0, 0, time.UTC)
+	m := f.raw("ran 5k in 31 minutes yesterday, and lifted", sent)
+	yesterday := sent.AddDate(0, 0, -1)
+	run := f.must(TypeRecordSaved, m.ID, RecordSaved{Kind: "workout", Data: json.RawMessage(`{"type":"run","km":5,"minutes":31}`), ObservedAt: &yesterday})
+	lift := f.must(TypeRecordSaved, m.ID, RecordSaved{Kind: "workout", Data: json.RawMessage(`{"type":"lift"}`)})
+
+	rows := func() [][]any {
+		t.Helper()
+		res, err := f.s.Query(ctx, `SELECT json_extract(data, '$.type'), json_extract(data, '$.minutes'), observed_at FROM records
+			WHERE owner = ? AND kind = 'workout' ORDER BY observed_at`, []any{f.owner}, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res.Rows
+	}
+	if r := rows(); len(r) != 2 || r[0][0] != "run" || r[0][1] != int64(31) || r[1][2] != fmtTime(sent) {
+		t.Fatalf("two records from one text: %v", r)
+	}
+	fix := f.raw("it was 29 minutes", sent.Add(time.Hour))
+	f.must(TypeRecordSaved, fix.ID, RecordSaved{Kind: "workout", Data: json.RawMessage(`{"type":"run","km":5,"minutes":29}`), Replaces: run.ID})
+	f.must(TypeRecordRemoved, fix.ID, RecordRemoved{RecordID: lift.ID, Reason: "didn't lift after all"})
+	if r := rows(); len(r) != 1 || r[0][1] != int64(29) || r[0][2] != fmtTime(yesterday) {
+		t.Fatalf("after replace and remove: %v", r)
+	}
+
+	f.mustReject(TypeRecordSaved, RecordSaved{Kind: "workout", Data: json.RawMessage(`[1]`)})
+	f.mustReject(TypeRecordSaved, RecordSaved{Data: json.RawMessage(`{}`)})
+	f.mustReject(TypeRecordRemoved, RecordRemoved{RecordID: m.ID})
+
+	// Rebuilding from the log lands on the same rows.
+	before := rows()
+	if err := f.s.Rebuild(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if after := rows(); fmt.Sprint(after) != fmt.Sprint(before) {
+		t.Fatalf("rebuild: %v, incremental: %v", after, before)
+	}
+}
+
+func TestQueryIsReadOnly(t *testing.T) {
+	ctx := context.Background()
+	f, _ := weightStory(t)
+	var qe *QueryError
+	for _, sql := range []string{
+		`DELETE FROM events`,
+		`UPDATE metric_values SET value = 0`,
+		`INSERT INTO rules (id, owner, text, source, created_at) VALUES ('x', 'x', 'x', 'x', 'x')`,
+		`CREATE TABLE sneaky (x)`,
+		`SELECT nope FROM nowhere`,
+	} {
+		if _, err := f.s.Query(ctx, sql, nil, 10); !errors.As(err, &qe) {
+			t.Errorf("%s: want QueryError, got %v", sql, err)
+		}
+	}
+	res, err := f.s.Query(ctx, `SELECT id FROM events ORDER BY seq`, nil, 3)
+	if err != nil || len(res.Rows) != 3 || !res.Truncated || res.Columns[0] != "id" {
+		t.Fatalf("limit: %+v %v", res, err)
+	}
+	res, _ = f.s.Query(ctx, `SELECT printf('%.*c', 10000, 'x')`, nil, 1)
+	if s := res.Rows[0][0].(string); !strings.HasSuffix(s, "…[1808 more bytes]") {
+		t.Fatalf("long cell not cut: %d bytes", len(s))
+	}
+
+	schema, err := f.s.Schema(ctx)
+	if err != nil || !strings.Contains(schema, "CREATE TABLE records") || strings.Contains(schema, "token_hash") {
+		t.Fatalf("schema: %v\n%s", err, schema)
+	}
+	docs := map[string]string{}
+	for _, d := range EventDocs() {
+		docs[d.Type] = d.Payload
+	}
+	if got := docs[TypeMetricObserved]; got != "{collection_id: string, metric?: string, value: number, unit?: string, observed_at?: RFC 3339 time, replaces?: string}" {
+		t.Fatalf("metric.observed shape: %s", got)
 	}
 }

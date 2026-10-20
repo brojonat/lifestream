@@ -22,6 +22,8 @@ const (
 	TypeLabelRemoved      = "label.removed"
 	TypeMetricObserved    = "metric.observed"
 	TypeMetricRemoved     = "metric.removed"
+	TypeRecordSaved       = "record.saved"
+	TypeRecordRemoved     = "record.removed"
 	TypeRuleAdded         = "rule.added"
 	TypeRuleRemoved       = "rule.removed"
 )
@@ -94,6 +96,19 @@ type (
 	MetricRemoved struct {
 		ValueID string `json:"value_id"`
 		Reason  string `json:"reason"`
+	}
+	// RecordSaved keeps data of any shape: Kind names it ("workout"), Data
+	// is a JSON object. ObservedAt and Replaces work as for metric.observed.
+	RecordSaved struct {
+		Kind       string          `json:"kind"`
+		Data       json.RawMessage `json:"data"`
+		ObservedAt *time.Time      `json:"observed_at,omitempty"`
+		Replaces   string          `json:"replaces,omitempty"`
+	}
+	// RecordRemoved withdraws a record: RecordID is its record.saved event.
+	RecordRemoved struct {
+		RecordID string `json:"record_id"`
+		Reason   string `json:"reason"`
 	}
 )
 
@@ -374,17 +389,9 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 				return err
 			}
 		}
-		observed := e.OccurredAt
-		if p.ObservedAt != nil {
-			observed = *p.ObservedAt
-		} else if replaced != nil {
-			observed = *replaced
-		} else if e.ParentID != "" {
-			parent, err := scanEvent(tx.QueryRowContext(ctx, selectEvent+` WHERE id = ?`, e.ParentID))
-			if err != nil {
-				return fmt.Errorf("reading parent of %s: %w", e.ID, err)
-			}
-			observed = parent.OccurredAt
+		observed, err := observedAt(ctx, tx, e, p.ObservedAt, replaced)
+		if err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO metric_values
 			(event_id, owner, collection_id, source_event_id, metric, value, unit, observed_at)
@@ -399,6 +406,40 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 			return err
 		}
 		if _, err := dropValue(ctx, tx, e.Owner, p.ValueID, ""); err != nil {
+			return err
+		}
+
+	case TypeRecordSaved:
+		var p RecordSaved
+		if err := decode(e, &p); err != nil {
+			return err
+		}
+		var obj map[string]json.RawMessage
+		if p.Kind == "" || json.Unmarshal(p.Data, &obj) != nil || obj == nil {
+			return invalid("%s needs a kind and a JSON object as data", e.Type)
+		}
+		var replaced *time.Time
+		if p.Replaces != "" {
+			var err error
+			if replaced, err = dropRecord(ctx, tx, e.Owner, p.Replaces); err != nil {
+				return err
+			}
+		}
+		observed, err := observedAt(ctx, tx, e, p.ObservedAt, replaced)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO records (event_id, owner, kind, source_event_id, data, observed_at)
+			VALUES (?, ?, ?, ?, ?, ?)`, e.ID, e.Owner, p.Kind, nullable(e.ParentID), string(p.Data), fmtTime(observed)); err != nil {
+			return fmt.Errorf("projecting %s: %w", e.Type, err)
+		}
+
+	case TypeRecordRemoved:
+		var p RecordRemoved
+		if err := decode(e, &p); err != nil {
+			return err
+		}
+		if _, err := dropRecord(ctx, tx, e.Owner, p.RecordID); err != nil {
 			return err
 		}
 	}
@@ -475,7 +516,7 @@ func (s *Store) Rebuild(ctx context.Context) error {
 		return fmt.Errorf("rebuilding: %w", err)
 	}
 	defer tx.Rollback()
-	for _, t := range []string{"collections", "collection_rules", "collection_members", "metric_values", "rules", "session_events", "session_messages"} {
+	for _, t := range []string{"collections", "collection_rules", "collection_members", "metric_values", "records", "rules", "session_events", "session_messages"} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+t); err != nil {
 			return fmt.Errorf("rebuilding: clearing %s: %w", t, err)
 		}
@@ -810,6 +851,51 @@ func dropValue(ctx context.Context, tx *sql.Tx, owner, valueID, collectionID str
 	t, err := parseTime(at)
 	if err != nil {
 		return nil, fmt.Errorf("reading value %s: %w", valueID, err)
+	}
+	return &t, nil
+}
+
+// observedAt is when a value or record was observed: as given, else the
+// time of what it replaces, else when its source event happened.
+func observedAt(ctx context.Context, tx *sql.Tx, e Event, given, replaced *time.Time) (time.Time, error) {
+	switch {
+	case given != nil:
+		return *given, nil
+	case replaced != nil:
+		return *replaced, nil
+	case e.ParentID != "":
+		parent, err := scanEvent(tx.QueryRowContext(ctx, selectEvent+` WHERE id = ?`, e.ParentID))
+		if err != nil {
+			return time.Time{}, fmt.Errorf("reading parent of %s: %w", e.ID, err)
+		}
+		return parent.OccurredAt, nil
+	}
+	return e.OccurredAt, nil
+}
+
+// dropRecord deletes what a record.saved event recorded, like dropValue.
+func dropRecord(ctx context.Context, tx *sql.Tx, owner, recordID string) (*time.Time, error) {
+	r, err := scanEvent(tx.QueryRowContext(ctx, selectEvent+` WHERE id = ?`, recordID))
+	if errors.Is(err, ErrNotFound) || err == nil && (r.Type != TypeRecordSaved || r.Owner != owner) {
+		return nil, invalid("%s is not a record (a record.saved event)", recordID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading record %s: %w", recordID, err)
+	}
+	var at string
+	err = tx.QueryRowContext(ctx, `SELECT observed_at FROM records WHERE event_id = ?`, recordID).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading record %s: %w", recordID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM records WHERE event_id = ?`, recordID); err != nil {
+		return nil, fmt.Errorf("removing record %s: %w", recordID, err)
+	}
+	t, err := parseTime(at)
+	if err != nil {
+		return nil, fmt.Errorf("reading record %s: %w", recordID, err)
 	}
 	return &t, nil
 }

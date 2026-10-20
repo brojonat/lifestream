@@ -1,5 +1,6 @@
 // The agent's flows against a fake model (pi-ai's faux provider) and a fake
-// Go API, so they run in CI without API calls.
+// Go API, so they run in CI without API calls. The model's tool calls are
+// code mode scripts, run for real in the QuickJS sandbox.
 
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -12,7 +13,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { Agent, describe, POINTER_BYTES } from "../src/agent.ts";
-import { type Collection, GoApi, type MetricValue, type StoredEvent } from "../src/goapi.ts";
+import { type Collection, GoApi, type QueryResult, type StoredEvent } from "../src/goapi.ts";
 import { newLogger } from "../src/log.ts";
 import { type Judge, judgePrompt, parseVerdicts } from "../src/lookback.ts";
 import { handler } from "../src/server.ts";
@@ -20,14 +21,15 @@ import { handler } from "../src/server.ts";
 const ctx = BACKGROUND_CONTEXT;
 const OWNER = "01OWNER";
 
-/** A stand-in for Go's internal API: remembers appends, serves collections. */
+/** A stand-in for Go's internal API: remembers appends and queries, serves collections. */
 class FakeGo {
 	appends: { body: { owner: string; type: string; parent_id?: string; payload: any }; key: string | undefined }[] = [];
+	queries: { sql: string; params: unknown[] }[] = [];
+	answer: (sql: string) => QueryResult = () => ({ columns: [], rows: [], truncated: false });
 	collections: Collection[] = [];
 	rules: { id: string; text: string; source: string }[] = [];
 	events: (StoredEvent & { seq: number })[] = []; // raw events the look-back can find
 	members = new Map<string, Set<string>>();
-	values: MetricValue[] = [];
 	submitted = new Map<string, StoredEvent & { seq: number }>();
 	server!: Server;
 	url = "";
@@ -43,6 +45,15 @@ class FakeGo {
 				assert.equal(url.searchParams.get("owner"), OWNER);
 				return json(200, { collections: this.collections });
 			}
+			if (req.method === "GET" && url.pathname === "/api/schema") {
+				return json(200, { tables: "CREATE TABLE records (event_id TEXT, kind TEXT, data TEXT);", events: [{ type: "record.saved", payload: "{kind: string, data: JSON object}", does: "keeps data" }] });
+			}
+			if (req.method === "POST" && url.pathname === "/api/query") {
+				const q = JSON.parse(await read(req));
+				if (/^\s*(delete|update|insert)/i.test(q.sql)) return json(400, { error: "query: attempt to write a readonly database" });
+				this.queries.push({ sql: q.sql, params: q.params });
+				return json(200, this.answer(q.sql));
+			}
 			if (req.method === "GET" && url.pathname === "/api/events") {
 				const after = Number(url.searchParams.get("after") ?? 0);
 				const limit = Number(url.searchParams.get("limit") ?? 100);
@@ -51,14 +62,6 @@ class FakeGo {
 			const m = /^\/api\/collections\/(\w+)\/members$/.exec(url.pathname);
 			if (req.method === "GET" && m) {
 				return json(200, { members: [...(this.members.get(m[1]) ?? [])].map((event_id) => ({ event_id, definition_version: 1 })) });
-			}
-			const vals = /^\/api\/collections\/(\w+)\/values$/.exec(url.pathname);
-			if (req.method === "GET" && vals) {
-				return json(200, { values: this.values.filter((v) => v.collection_id === vals[1]) });
-			}
-			const kids = /^\/api\/events\/(\w+)\/children$/.exec(url.pathname);
-			if (req.method === "GET" && kids) {
-				return json(200, { events: this.appends.filter((a) => a.body.parent_id === kids[1]).map((a) => ({ type: a.body.type })) });
 			}
 			const one = /^\/api\/events\/(\w+)$/.exec(url.pathname);
 			if (req.method === "GET" && one) {
@@ -106,6 +109,15 @@ const sms = (id: string, body: string): StoredEvent => ({
 	id, owner: OWNER, source: "twilio.sms", type: "message.received", occurred_at: "2026-10-17T07:00:00Z", payload: { Body: body },
 });
 
+/** A model turn that runs one code mode script. */
+const script = (code: string) => fauxAssistantMessage([fauxToolCall("codemode", { code })], { stopReason: "toolUse" });
+
+/** The newest tool result the model saw, as text. */
+const lastResult = (context: { messages: unknown[] }) => {
+	const last = context.messages.at(-1) as { role: string; content: unknown; isError?: boolean };
+	return `${last.role} ${last.isError} ${JSON.stringify(last.content)}`;
+};
+
 let dir: string;
 let go: FakeGo;
 before(async () => {
@@ -119,31 +131,36 @@ after(async () => {
 });
 
 let dbs = 0;
-function open(responses: Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0], opts: { judge?: Judge; db?: string } = {}) {
+function open(responses: Parameters<ReturnType<typeof fauxProvider>["setResponses"]>[0], opts: { judge?: Judge; db?: string; modelId?: string } = {}) {
 	const faux = fauxProvider();
 	faux.setResponses(responses);
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const storagePath = join(dir, opts.db ?? `agent-${++dbs}.db`); // each test its own harness state
-	return Agent.open({ storagePath, models, model: { provider: "faux", modelId: "faux-1" }, api: new GoApi(go.url), lookBack: { judge: opts.judge, retryBaseMs: 20 } }, ctx);
+	return Agent.open({ storagePath, models, model: { provider: "faux", modelId: opts.modelId ?? "faux-1" }, api: new GoApi(go.url), lookBack: { judge: opts.judge, retryBaseMs: 20 } }, ctx);
 }
 
 test("steering, labeling, values, dedup and restart", async () => {
-	const seenPrompts: string[] = [];
+	const seen: string[] = [];
 	const remember = (msg: ReturnType<typeof fauxAssistantMessage>) => (context: unknown) => {
-		seenPrompts.push(JSON.stringify(context));
+		seen.push(JSON.stringify(context));
 		return msg;
 	};
 	let agent = await open([
 		// "start tracking my weight" (no look-back here; it has its own test)
-		remember(fauxAssistantMessage([fauxToolCall("create_collection", { event_id: "E1", name: "weight", kind: "metric", unit: "lb", include: "texts reporting body weight", lookback_days: 0 })], { stopReason: "toolUse" })),
+		remember(script(`await tools.append({ type: "collection.started", parent_id: "E1", payload: { name: "weight", kind: "metric", unit: "lb", include: "texts reporting body weight", lookback_days: 0 } })`)),
 		fauxAssistantMessage([fauxText("started weight")]),
 		// "weight 175": the section now lists the collection
-		remember(fauxAssistantMessage([
-			fauxToolCall("label_event", { event_id: "E2", collection_id: "01DERIVED1", definition_version: 1, reason: "reports weight" }),
-			fauxToolCall("log_value", { event_id: "E2", collection_id: "01DERIVED1", value: 175 }),
-		], { stopReason: "toolUse" })),
-		fauxAssistantMessage([fauxText("filed 175 lb")]),
+		remember(script(`
+			const w = "01DERIVED1";
+			await tools.append({ type: "label.applied", parent_id: "E2", payload: { event_id: "E2", collection_id: w, definition_version: 1, reason: "reports weight" } });
+			const { id } = await tools.append({ type: "metric.observed", parent_id: "E2", payload: { collection_id: w, value: 175 } });
+			text("logged " + id);
+		`)),
+		(context) => {
+			assert.match(lastResult(context), /logged 01DERIVED3/, "scripts get each append's id back");
+			return fauxAssistantMessage([fauxText("filed 175 lb")]);
+		},
 	], { db: "restart.db" });
 
 	const first = await agent.submit(OWNER, sms("E1", "start tracking my weight"), ctx);
@@ -154,14 +171,19 @@ test("steering, labeling, values, dedup and restart", async () => {
 	assert.deepEqual(go.appends.map((a) => a.body.type), ["collection.started", "label.applied", "metric.observed"]);
 	for (const a of go.appends) {
 		assert.equal(a.body.owner, OWNER);
-		assert.match(a.key ?? "", /^tool:/, "every write carries the tool task id as its idempotency key");
+		assert.match(a.key ?? "", /^tool:/, "every write carries its nested tool task id as the idempotency key");
 	}
-	assert.equal(new Set(go.appends.map((a) => a.key)).size, 3, "keys differ per tool call");
+	assert.equal(new Set(go.appends.map((a) => a.key)).size, 3, "keys differ per call");
 	assert.equal(go.appends[0].body.parent_id, "E1");
 	assert.deepEqual(go.appends[2].body.payload, { collection_id: "01DERIVED1", value: 175 });
-	assert.match(seenPrompts[0], /No open collections/);
-	assert.match(seenPrompts[1], /id=01DERIVED1 name=\\"weight\\" kind=metric version=1 metric=weight unit=lb/);
-	assert.match(seenPrompts[1], /include \(v1\): texts reporting body weight/);
+	const offered = (await (await agent.conversationFor(OWNER, ctx)).agent(ctx)).tools.map((t) => t.name);
+	assert.deepEqual(offered, ["codemode"], "the model is offered code mode only");
+	assert.match(seen[0], /No open collections/);
+	assert.match(seen[0], /The owner's id is 01OWNER/);
+	assert.match(seen[0], /- record.saved \{kind: string, data: JSON object\}: keeps data/);
+	assert.match(seen[0], /append\(/, "the codemode section declares the tools scripts can call");
+	assert.match(seen[1], /id=01DERIVED1 name=\\"weight\\" kind=metric version=1 metric=weight unit=lb/);
+	assert.match(seen[1], /include \(v1\): texts reporting body weight/);
 
 	// Redelivery after a crash: same event id, same submission, no model call
 	// (the faux queue is empty and would fail).
@@ -170,21 +192,22 @@ test("steering, labeling, values, dedup and restart", async () => {
 	const conv = await agent.conversationFor(OWNER, ctx);
 	await agent.close(ctx);
 
-	agent = await open([], { db: "restart.db" });
-	assert.equal((await agent.conversationFor(OWNER, ctx)).id, conv.id, "same conversation after restart");
+	agent = await open([], { db: "restart.db", modelId: "faux-2" });
+	const reopened = await agent.conversationFor(OWNER, ctx);
+	assert.equal(reopened.id, conv.id, "same conversation after restart");
+	assert.equal((await reopened.agent(ctx)).model?.modelId, "faux-2", "a new AGENT_MODEL moves the conversation");
 	const afterRestart = await agent.submit(OWNER, sms("E2", "weight 175"), ctx);
 	assert.equal(String(afterRestart.id), String(second.id));
 	assert.equal(go.appends.length, 3);
 	await agent.close(ctx);
 });
 
-test("a rejected write goes back to the model as a tool error", async () => {
-	let toolResult = "";
+test("a rejected write throws in the script and the model sees why", async () => {
+	let result = "";
 	const agent = await open([
-		fauxAssistantMessage([fauxToolCall("label_event", { event_id: "E3", collection_id: "01DERIVED1", definition_version: 9, reason: "x" })], { stopReason: "toolUse" }),
+		script(`await tools.append({ type: "label.applied", parent_id: "E3", payload: { event_id: "E3", collection_id: "01DERIVED1", definition_version: 9, reason: "x" } })`),
 		(context) => {
-			const last = context.messages.at(-1) as { role: string; content: unknown; isError?: boolean };
-			toolResult = `${last.role} ${last.isError} ${JSON.stringify(last.content)}`;
+			result = lastResult(context);
 			return fauxAssistantMessage([fauxText("will fix")]);
 		},
 	]);
@@ -193,50 +216,42 @@ test("a rejected write goes back to the model as a tool error", async () => {
 	assert.equal((await sub.wait(ctx)).status, "done");
 	await agent.close(ctx);
 	assert.equal(go.appends.length, appended, "nothing stored");
-	assert.match(toolResult, /^toolResult true .*rejected: .*422 definition_version 9/);
+	assert.match(result, /^toolResult true .*422 definition_version 9/);
 });
 
-test("readings: several per text, dated, listed, replaced, removed, unlabeled", async () => {
-	go.values = [{ event_id: "01VALUE1", collection_id: "01W", source_event_id: "E5", value: 176, unit: "lb", observed_at: "2026-10-18T19:00:00Z" }];
-	let listed = "";
+test("scripts query, then change data from what they found", async () => {
+	go.answer = () => ({ columns: ["event_id", "value"], rows: [["01VALUE1", 176], ["01VALUE2", 177]], truncated: false });
+	let result = "";
 	const agent = await open([
-		fauxAssistantMessage([
-			fauxToolCall("log_value", { event_id: "E5", collection_id: "01W", value: 177.4, observed_at: "2026-10-19T12:00:00-07:00" }),
-			fauxToolCall("log_value", { event_id: "E5", collection_id: "01W", value: 176, observed_at: "2026-10-18T12:00:00-07:00" }),
-		], { stopReason: "toolUse" }),
-		fauxAssistantMessage([fauxText("filed two")]),
-		fauxAssistantMessage([fauxToolCall("list_values", { collection_id: "01W" })], { stopReason: "toolUse" }),
+		script(`
+			const r = await tools.query({ sql: "SELECT event_id, value FROM metric_values WHERE collection_id = ? ORDER BY observed_at", params: ["01W"] });
+			for (const [id, value] of r.rows) {
+				if (value === 176) await tools.append({ type: "metric.observed", parent_id: "E6", payload: { collection_id: "01W", value: 175, replaces: id } });
+				else await tools.append({ type: "metric.removed", parent_id: "E6", payload: { value_id: id, reason: "owner retracted it" } });
+			}
+			try { await tools.query({ sql: "DELETE FROM events" }); } catch (e) { text("refused: " + e.message); }
+		`),
 		(context) => {
-			listed = JSON.stringify(context.messages.at(-1));
-			return fauxAssistantMessage([
-				fauxToolCall("log_value", { event_id: "E6", collection_id: "01W", value: 175, replaces: "01VALUE1" }),
-				fauxToolCall("remove_value", { event_id: "E6", value_id: "01VALUE2", reason: "owner retracted it" }),
-				fauxToolCall("remove_label", { event_id: "E6", labeled_event_id: "E5", collection_id: "01W", definition_version: 1, reason: "not a weight" }),
-			], { stopReason: "toolUse" });
+			result = lastResult(context);
+			return fauxAssistantMessage([fauxText("fixed")]);
 		},
-		fauxAssistantMessage([fauxText("fixed")]),
 	]);
 	const before = go.appends.length;
-	for (const [id, body] of [["E5", "177.4 yesterday, 176 the day before"], ["E6", "the 176 was 175; drop the other"]]) {
-		const sub = await agent.submit(OWNER, sms(id, body), ctx);
-		assert.equal((await sub.wait(ctx)).status, "done");
-	}
+	const sub = await agent.submit(OWNER, sms("E6", "the 176 was 175; drop the other"), ctx);
+	assert.equal((await sub.wait(ctx)).status, "done");
 	await agent.close(ctx);
-	const got = go.appends.slice(before).map((a) => ({ type: a.body.type, parent: a.body.parent_id, payload: a.body.payload }));
-	assert.deepEqual(got, [
-		{ type: "metric.observed", parent: "E5", payload: { collection_id: "01W", value: 177.4, observed_at: "2026-10-19T12:00:00-07:00" } },
-		{ type: "metric.observed", parent: "E5", payload: { collection_id: "01W", value: 176, observed_at: "2026-10-18T12:00:00-07:00" } },
-		{ type: "metric.observed", parent: "E6", payload: { collection_id: "01W", value: 175, replaces: "01VALUE1" } },
-		{ type: "metric.removed", parent: "E6", payload: { value_id: "01VALUE2", reason: "owner retracted it" } },
-		{ type: "label.removed", parent: "E6", payload: { event_id: "E5", collection_id: "01W", definition_version: 1, reason: "not a weight" } },
+	assert.deepEqual(go.queries.at(-1), { sql: "SELECT event_id, value FROM metric_values WHERE collection_id = ? ORDER BY observed_at", params: ["01W"] });
+	assert.deepEqual(go.appends.slice(before).map((a) => [a.body.type, a.body.parent_id, a.body.payload]), [
+		["metric.observed", "E6", { collection_id: "01W", value: 175, replaces: "01VALUE1" }],
+		["metric.removed", "E6", { value_id: "01VALUE2", reason: "owner retracted it" }],
 	]);
-	assert.match(listed, /value_id=01VALUE1 observed_at=2026-10-18T19:00:00Z value=176 lb from_event=E5/);
+	assert.match(result, /refused: .*400 query: attempt to write a readonly database/);
 });
 
 test("what the owner teaches becomes a rule the next request sees", async () => {
 	let prompt = "";
 	const agent = await open([
-		fauxAssistantMessage([fauxToolCall("add_rule", { event_id: "E4", text: "w means weight" })], { stopReason: "toolUse" }),
+		script(`await tools.append({ type: "rule.added", parent_id: "E4", payload: { text: "w means weight" } })`),
 		(context) => {
 			prompt = JSON.stringify(context);
 			return fauxAssistantMessage([fauxText("noted")]);
@@ -277,10 +292,10 @@ test("starting a collection labels the last 7 days in the background; an exclude
 		});
 	};
 	const agent = await open([
-		fauxAssistantMessage([fauxToolCall("create_collection", { event_id: "L5", name: "weight", kind: "metric", unit: "lb", include: "weight readings" })], { stopReason: "toolUse" }),
+		script(`await tools.append({ type: "collection.started", parent_id: "L5", payload: { name: "weight", kind: "metric", unit: "lb", include: "weight readings" } })`),
 		fauxAssistantMessage([fauxText("started")]),
 		fauxAssistantMessage([fauxText("ok")]), // the look-back's report
-		fauxAssistantMessage([fauxToolCall("amend_collection", { event_id: "L6", collection_id: "01DERIVED1", exclude: "pets' weight" })], { stopReason: "toolUse" }),
+		script(`await tools.append({ type: "collection.amended", parent_id: "L6", payload: { collection_id: "01DERIVED1", exclude: "pets' weight" } })`),
 		fauxAssistantMessage([fauxText("amended")]),
 		fauxAssistantMessage([fauxText("ok")]), // the re-check's report
 	], { judge });
@@ -322,7 +337,7 @@ test("judge prompt and verdict parsing", () => {
 test("large payloads become pointers", () => {
 	const big = { ...sms("E9", ""), type: "note", payload: { title: "Postgres notes", html: "x".repeat(POINTER_BYTES) } };
 	const text = describe(big);
-	assert.match(text, /Payload is \d+ bytes, title "Postgres notes"\. Use read_event/);
+	assert.match(text, /Payload is \d+ bytes, title "Postgres notes"\. Query it to read it\./);
 	assert.ok(!text.includes("xxxx"));
 	assert.match(describe(sms("E1", "weight 175")), /"Body":"weight 175"/);
 });

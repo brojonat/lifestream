@@ -2,7 +2,7 @@
 //   AGENT_ADDR            listen address (default 127.0.0.1:8082)
 //   LIFESTREAM_API_URL    Go's internal API (default http://127.0.0.1:8081)
 //   DATA_DIR              where agent.db lives (default ~/.lifestream)
-//   AGENT_MODEL           provider/modelId (default anthropic/claude-haiku-5-5)
+//   AGENT_MODEL           provider/modelId (default anthropic/claude-sonnet-5-5)
 //   ANTHROPIC_API_KEY     read by the Anthropic provider
 //   LOG_LEVEL, LOG_FORMAT
 
@@ -21,7 +21,7 @@ const env = process.env;
 const log = newLogger();
 const ctx = BACKGROUND_CONTEXT;
 
-const [provider, ...rest] = (env.AGENT_MODEL ?? "anthropic/claude-haiku-5-5").split("/");
+const [provider, ...rest] = (env.AGENT_MODEL ?? "anthropic/claude-sonnet-5-5").split("/");
 const model = { provider, modelId: rest.join("/") };
 const models = createModels();
 models.setProvider(anthropicProvider());
