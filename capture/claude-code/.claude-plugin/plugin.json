@@ -1,8 +1,0 @@
-{
-  "name": "lifestream-capture",
-  "version": "0.1.0",
-  "description": "Send each Claude Code turn to Lifestream as llm.message events. Captures nothing unless LIFESTREAM_CAPTURE=on.",
-  "author": {
-    "name": "Jon Brown"
-  }
-}

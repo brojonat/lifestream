@@ -49,3 +49,26 @@ back at their old positions.
 | Artifact textbooks: books as ordered collections, hosted viewer with watermark, claude.ai link delivery, launch checkout | `VISION.md` "Claude artifacts as textbooks"; `TODO.md` A1–A8 |
 | Paid notifications design: caps, first-N slot reservation, subscriber inbox | `VISION.md` "Paid notifications"; `TODO.md` N1–N6 |
 | Research on the above: rex has no public docs, Sprite checkpoints can't seed new Sprites, Claude Code only runs Anthropic models, OpenRouter management keys, Stripe Checkout has no stock, claude.ai artifact sharing by email | `LEARNINGS.md` (the matching entries) |
+
+## Capture clients and sessions (2026-10-20)
+
+Clients are not the server's concern: many clients will push events, and
+the server's contract is `POST /events`. The capture adapters moved to
+their own repo, `~/projects/lifestream-clients` (created from this repo at
+`b7b5060`), which ships them as first-class clients with their own tests.
+The server dropped everything that knew about harness sessions; clients now
+choose their own granularity (one event per turn, say) and send their own
+`idempotency_key`.
+
+Everything below is intact at `b7b5060`.
+
+| What | Where at `b7b5060` | Now |
+| --- | --- | --- |
+| Claude Code plugin, pi extension, Strands hook provider, plugin marketplace | `capture/`, `.claude-plugin/`, `agent/test/pi-capture.test.ts` | lifestream-clients |
+| `lifestream capture <harness>`: transcript tailer with saved offsets | `cmd/lifestream/capture.go`, `internal/capture/` | lifestream-clients, as `lifestream-capture` |
+| Deterministic secret scanner (Go and Python twins, shared corpus) | `internal/scan/`, `capture/strands/.../scan.py`, `testdata/secrets.json` | lifestream-clients |
+| Harness fixtures | `testdata/claude-code`, `codex`, `pi` | lifestream-clients |
+| Sessions in the server: `llm.message` keyed by `(session_id, sequence)`, only a session's first 3 events dispatched, the rest joining its collections by projection | `internal/store/sessions.go`, `store/events.go` (session ref, dispatch rank), `ingest/events.go`, `projections.go` (`applySession`, `addSession`, `removeSession`) | removed; a later migration drops `session_events` |
+| Common-format view of sessions across harnesses, `lifestream sessions` | `internal/transcript/`, `session_messages` table, `cmd/lifestream/sessions.go` | removed; a later migration drops `session_messages`. The agent can build views with `query` |
+
+Old `llm.message` events stay in the log as ordinary events.

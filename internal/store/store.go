@@ -150,6 +150,11 @@ var migrations = []string{
 		observed_at     TEXT NOT NULL
 	);
 	CREATE INDEX records_owner_kind ON records(owner, kind, observed_at);`,
+
+	// Sessions moved out of the server (2026-10-20): clients send events at
+	// the granularity they choose, with their own idempotency keys.
+	`DROP TABLE session_events;
+	DROP TABLE session_messages;`,
 }
 
 // Store is the open database. Writes are serialized by mu so the hash chain

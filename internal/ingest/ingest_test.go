@@ -226,8 +226,6 @@ func TestPushEventsRejects(t *testing.T) {
 		"agent source":   `{"type":"label.applied","source":"agent"}`,
 		"parent smuggle": `{"type":"note","parent_id":"x"}`,
 		"bad in batch":   `[{"type":"note"},{"payload":{}}]`,
-		"no session":     `[{"type":"note"},{"type":"llm.message","payload":{"sequence":1}}]`,
-		"session key":    `{"type":"llm.message","idempotency_key":"k","payload":{"session_id":"s","sequence":1}}`,
 	} {
 		if rec := postEvents(h, token, body); rec.Code != 400 {
 			t.Errorf("%s: got %d, want 400", name, rec.Code)
@@ -238,13 +236,14 @@ func TestPushEventsRejects(t *testing.T) {
 	}
 }
 
-func TestPushSessionBatchTwice(t *testing.T) {
+// Clients key their own events; a resent batch with the same keys is a no-op.
+func TestPushBatchTwice(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t)
 	owner, token, _ := st.AddUser(ctx, "me", "+15555550100")
 	h := Events(st, quiet)
-	batch := "{\"type\":\"llm.message\",\"source\":\"claude-code\",\"payload\":{\"session_id\":\"s1\",\"sequence\":0,\"message\":{\"type\":\"user\"}}}\n" +
-		"{\"type\":\"llm.message\",\"source\":\"claude-code\",\"payload\":{\"session_id\":\"s1\",\"sequence\":1,\"message\":{\"type\":\"assistant\"}}}\n"
+	batch := "{\"type\":\"llm.message\",\"source\":\"claude-code\",\"idempotency_key\":\"s1:0\",\"payload\":{\"message\":{\"type\":\"user\"}}}\n" +
+		"{\"type\":\"llm.message\",\"source\":\"claude-code\",\"idempotency_key\":\"s1:1\",\"payload\":{\"message\":{\"type\":\"assistant\"}}}\n"
 	for i, wantCreated := range []bool{true, false} {
 		rec := postEvents(h, token, batch)
 		var resp struct{ Events []Result }

@@ -23,8 +23,6 @@ func main() {
 			serveCommand(),
 			usersCommand(),
 			pushCommand(),
-			captureCommand(),
-			sessionsCommand(),
 			verifyCommand(),
 			rebuildCommand(),
 		},

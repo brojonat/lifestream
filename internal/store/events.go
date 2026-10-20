@@ -70,19 +70,6 @@ func (s *Store) Append(ctx context.Context, e Event) (stored Event, created bool
 	}
 	e.OccurredAt, e.ReceivedAt = e.OccurredAt.UTC(), e.ReceivedAt.UTC()
 
-	var session SessionRef
-	if e.Type == TypeLLMMessage {
-		ref, err := ParseSessionRef(e.Payload)
-		if err != nil {
-			return Event{}, false, err
-		}
-		key := sessionKey(ref)
-		if e.IdempotencyKey != "" && e.IdempotencyKey != key {
-			return Event{}, false, invalid("%s idempotency key is (session_id, sequence); drop idempotency_key", e.Type)
-		}
-		e.IdempotencyKey, session = key, ref
-	}
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e.ID == "" {
@@ -123,15 +110,8 @@ func (s *Store) Append(ctx context.Context, e Event) (stored Event, created bool
 	}
 	e.Hash = chainHash(e.PrevHash, e)
 
-	// Raw events go to the agent; of a session, only the first few.
+	// Raw events go to the agent; its own don't come back to it.
 	dispatch := e.Source != SourceAgent
-	if dispatch && session.SessionID != "" {
-		rank, err := sessionRank(ctx, tx, e.Owner, session.SessionID)
-		if err != nil {
-			return Event{}, false, err
-		}
-		dispatch = rank < SessionHead
-	}
 
 	res, err := tx.ExecContext(ctx, `INSERT INTO events
 		(id, owner, source, type, occurred_at, received_at, parent_id, idempotency_key, payload, dispatch, prev_hash, hash)

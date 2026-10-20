@@ -282,10 +282,7 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 		if err := ownedEvent(ctx, tx, e.Owner, p.EventID); err != nil {
 			return err
 		}
-		if err := upsertMember(ctx, tx, c.ID, p.EventID, p.DefinitionVersion, p.Reason, e); err != nil {
-			return err
-		}
-		return addSession(ctx, tx, c.ID, p.EventID, p.DefinitionVersion, e)
+		return upsertMember(ctx, tx, c.ID, p.EventID, p.DefinitionVersion, p.Reason, e)
 
 	case TypeLabelRemoved:
 		var p LabelRemoved
@@ -306,7 +303,6 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 		if n, _ := res.RowsAffected(); n == 0 {
 			return invalid("event %s is not in collection %s", p.EventID, c.ID)
 		}
-		return removeSession(ctx, tx, c.ID, p.EventID, e)
 
 	case TypeLabelCorrected:
 		var p LabelCorrected
@@ -322,16 +318,11 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 		}
 		switch p.Action {
 		case "add":
-			if err := upsertMember(ctx, tx, c.ID, p.EventID, c.Version, "added by owner: "+p.Note, e); err != nil {
-				return err
-			}
-			return addSession(ctx, tx, c.ID, p.EventID, c.Version, e)
+			return upsertMember(ctx, tx, c.ID, p.EventID, c.Version, "added by owner: "+p.Note, e)
 		case "remove":
-			_, err := tx.ExecContext(ctx, `DELETE FROM collection_members WHERE collection_id = ? AND event_id = ?`, c.ID, p.EventID)
-			if err != nil {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM collection_members WHERE collection_id = ? AND event_id = ?`, c.ID, p.EventID); err != nil {
 				return fmt.Errorf("projecting %s: %w", e.Type, err)
 			}
-			return removeSession(ctx, tx, c.ID, p.EventID, e)
 		default:
 			return invalid("%s action must be add or remove, got %q", e.Type, p.Action)
 		}
@@ -361,9 +352,6 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 		if n, _ := res.RowsAffected(); n == 0 {
 			return invalid("no rule %q for this owner", p.RuleID)
 		}
-
-	case TypeLLMMessage:
-		return applySession(ctx, tx, e)
 
 	case TypeMetricObserved:
 		var p MetricObserved
@@ -519,7 +507,7 @@ func (s *Store) Rebuild(ctx context.Context) error {
 		return fmt.Errorf("rebuilding: %w", err)
 	}
 	defer tx.Rollback()
-	for _, t := range []string{"collections", "collection_rules", "collection_members", "metric_values", "records", "rules", "session_events", "session_messages"} {
+	for _, t := range []string{"collections", "collection_rules", "collection_members", "metric_values", "records", "rules"} {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+t); err != nil {
 			return fmt.Errorf("rebuilding: clearing %s: %w", t, err)
 		}

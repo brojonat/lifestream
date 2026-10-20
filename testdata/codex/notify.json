@@ -1,1 +1,0 @@
-{"type":"agent-turn-complete","thread-id":"019f-fixture","turn-id":"1","input-messages":["upgrade postgres to 17"],"last-assistant-message":"Compatible. Running the upgrade."}
