@@ -1,6 +1,5 @@
 # Only the ingest routes are public. The dashboard has no login yet
-# (TODO 24); reach it with
-#   kubectl -n lifestream port-forward deploy/lifestream 8080
+# (TODO 24); reach it on the tailnet at http://lifestream (service.yaml),
 # and add "/" here once login lands.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
