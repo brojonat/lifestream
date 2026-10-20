@@ -37,12 +37,13 @@ Each user message is one event from the owner's event store: an SMS, a note, a c
    - Commands change collections: "start capturing for X" / "track my weight" (create_collection), "also include Y in X" (amend_collection with include), "don't include Z in X" (amend_collection with exclude), "stop capturing X" (stop_collection), "resume X" (resume_collection). Pass the command event's id as event_id.
    - Everything else is data.
 2. For data, check it against every open collection's rules (the <collections> section). Label it into each collection it matches with label_event, passing that collection's current version. An exclude rule beats an include rule.
-3. For a metric collection, also call log_value with the number the event reports (e.g. "weight 175" -> 175). Use the collection's unit unless the event names another. The reading is dated at the event's time unless the owner says when it was taken ("yesterday", "on 10-19", "Monday morning"): then pass observed_at as an RFC 3339 timestamp, counting relative days from the event's timestamp, and for a day with no time of day use 12:00:00Z on that day. If the owner corrects an earlier reading (its number or its date), call log_value again with the original event's event_id; that replaces the earlier value.
-4. If you can't tell what the owner meant (an implausible number, an ambiguous command), call flag_for_review with a short question instead of guessing. The answer comes back later as a new event.
-5. A label.corrected event from the dashboard means the owner fixed a label you made (or missed). Learn the boundary from it; if it shows a rule is missing, amend the collection so future events are filed correctly.
-6. A review.answered event is the owner's answer to a question you flagged; its payload has the question and the original event_id. Act on it now (label, log the value, amend a rule), and write down anything general it teaches.
-7. collection.* events from the dashboard are changes the owner already made, often undoing one of yours. They are applied: don't repeat or reverse them, but don't make the same change again either.
-8. If the owner teaches you something ("w means weight", "ignore anything from ~/scratch"), make it durable with add_rule. Background work and future conversations only see what is written down. Follow every entry in <owner_rules>.
+3. For a metric collection, also call log_value for each number the event reports (e.g. "weight 175" -> 175; "175 today, 176 yesterday" -> two calls). Use the collection's unit unless the event names another. A reading is dated at the event's time unless the owner says when it was taken ("yesterday", "on 10-19", "Monday morning"): then pass observed_at as an RFC 3339 timestamp, counting relative days from the event's timestamp, in the owner's timezone if <owner_rules> gives one (noon that day when no time of day is given, e.g. 2026-10-19T12:00:00-07:00), else UTC.
+4. The data is yours to fix. When the owner corrects or retracts something ("the 176 was 175", "that was Tuesday", "delete yesterday's weight", "that wasn't about the migration"), find it (list_values for numbers, read_event for an event and what it became) and change it: log_value with replaces=<value_id> for a new number or date (the date carries over if you don't pass one), remove_value to drop a number, remove_label to take an event out of a collection. Pass the correcting event's id as event_id, so every change traces back to what asked for it.
+5. If you can't tell what the owner meant (an implausible number, an ambiguous command), call flag_for_review with a short question instead of guessing. The answer comes back later as a new event.
+6. A label.corrected event from the dashboard means the owner fixed a label you made (or missed). Learn the boundary from it; if it shows a rule is missing, amend the collection so future events are filed correctly.
+7. A review.answered event is the owner's answer to a question you flagged; its payload has the question and the original event_id. Act on it now (label, log the value, amend a rule), and write down anything general it teaches.
+8. collection.* events from the dashboard are changes the owner already made, often undoing one of yours. They are applied: don't repeat or reverse them, but don't make the same change again either.
+9. If the owner teaches you something ("w means weight", "ignore anything from ~/scratch"), make it durable with add_rule. Background work and future conversations only see what is written down. Follow every entry in <owner_rules>.
 
 Starting a collection or adding an include automatically labels the last 7 days of events in the background (pass lookback_days if the owner asks for another window); an exclude re-checks current members. A "Look-back ... finished" message is that job reporting; nothing to do.
 
@@ -153,17 +154,68 @@ export function collectionsExtension(api: GoApi, opts: { lookBack?: LookBackOpti
 
 	const logValue = defineTool({
 		name: "log_value",
-		description: "Record the number an event reports, for a metric collection. Logging again for the same event_id replaces its value.",
+		description: "Record one number for a metric collection; call once per reading (an event can report several). With replaces, it supersedes that value.",
 		parameters: Type.Object({
-			event_id: Type.String(),
+			event_id: Type.String({ description: "the event that reported (or corrected) it" }),
 			collection_id: Type.String(),
 			value: Type.Number(),
 			unit: Type.Optional(Type.String()),
-			observed_at: Type.Optional(Type.String({ description: "RFC 3339; only when the owner says when the reading was taken (default: the event's time)" })),
+			observed_at: Type.Optional(Type.String({ description: "RFC 3339; only when the owner says when the reading was taken (default: the event's time, or the replaced value's)" })),
+			replaces: Type.Optional(Type.String({ description: "value_id (from list_values) this corrects" })),
 		}),
 		replay: "safe",
 		execute: (a, tapi, ctx) =>
-			write(tapi, ctx, "metric.observed", { collection_id: a.collection_id, value: a.value, unit: a.unit, observed_at: a.observed_at }, a.event_id),
+			write(tapi, ctx, "metric.observed", { collection_id: a.collection_id, value: a.value, unit: a.unit, observed_at: a.observed_at, replaces: a.replaces }, a.event_id),
+	});
+
+	const listValues = defineTool({
+		name: "list_values",
+		description: "A metric collection's recorded values, oldest first, with the value_id to replace or remove each by.",
+		parameters: Type.Object({
+			collection_id: Type.String(),
+			days: Type.Optional(Type.Integer({ minimum: 1, description: "how far back; default 30" })),
+		}),
+		replay: "safe",
+		execute: async (a) => {
+			try {
+				const since = new Date(Date.now() - (a.days ?? 30) * 86400_000).toISOString();
+				const vs = await api.values(a.collection_id, since);
+				if (vs.length === 0) return text("No values.");
+				return text(vs.map((v) => `value_id=${v.event_id} observed_at=${v.observed_at} value=${v.value}${v.unit ? ` ${v.unit}` : ""} from_event=${v.source_event_id}`).join("\n"));
+			} catch (err) {
+				if (err instanceof ApiError && err.status < 500) return fail(err.message);
+				throw err;
+			}
+		},
+	});
+
+	const removeValue = defineTool({
+		name: "remove_value",
+		description: "Withdraw a recorded value (by value_id from list_values).",
+		parameters: Type.Object({
+			event_id: Type.String({ description: "the event that asked for it" }),
+			value_id: Type.String(),
+			reason: Type.String(),
+		}),
+		replay: "safe",
+		execute: (a, tapi, ctx) => write(tapi, ctx, "metric.removed", { value_id: a.value_id, reason: a.reason }, a.event_id),
+	});
+
+	const removeLabel = defineTool({
+		name: "remove_label",
+		description: "Take an event out of a collection. Pass the collection's current version and a short reason.",
+		parameters: Type.Object({
+			event_id: Type.String({ description: "the event that asked for it" }),
+			labeled_event_id: Type.String({ description: "the event to take out" }),
+			collection_id: Type.String(),
+			definition_version: Type.Integer({ minimum: 1 }),
+			reason: Type.String(),
+		}),
+		replay: "safe",
+		execute: (a, tapi, ctx) =>
+			write(tapi, ctx, "label.removed", {
+				event_id: a.labeled_event_id, collection_id: a.collection_id, definition_version: a.definition_version, reason: a.reason,
+			}, a.event_id),
 	});
 
 	const flagForReview = defineTool({
@@ -203,7 +255,10 @@ export function collectionsExtension(api: GoApi, opts: { lookBack?: LookBackOpti
 			statusTool("stop_collection", "collection.stopped", "Stop a collection: no new labels until resumed."),
 			statusTool("resume_collection", "collection.resumed", "Reopen a stopped collection."),
 			labelEvent,
+			removeLabel,
 			logValue,
+			listValues,
+			removeValue,
 			flagForReview,
 			readEvent,
 		],

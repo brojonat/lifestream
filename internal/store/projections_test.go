@@ -125,24 +125,48 @@ func TestCollectionLifecycle(t *testing.T) {
 	}
 }
 
-func TestMetricValueDatedAndReplaced(t *testing.T) {
+func TestMetricValuesDatedReplacedRemoved(t *testing.T) {
 	ctx := context.Background()
 	f, ids := weightStory(t)
 	w := ids["weight"]
 	sent := time.Date(2026, 10, 20, 16, 31, 0, 0, time.UTC)
-	yesterday := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	day := func(d int) *time.Time { t := time.Date(2026, 10, d, 19, 0, 0, 0, time.UTC); return &t }
+	recent := func() []MetricValue {
+		t.Helper()
+		vals, err := f.s.MetricValues(ctx, w, sent.AddDate(0, 0, -5))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return vals
+	}
 
-	m := f.raw("my weight yesterday 10-19 was 177.4", sent)
-	f.must(TypeMetricObserved, m.ID, MetricObserved{CollectionID: w, Value: float(177.4)})
-	f.must(TypeMetricObserved, m.ID, MetricObserved{CollectionID: w, Value: float(177.4), ObservedAt: &yesterday})
+	// One text, two readings.
+	m := f.raw("177.4 yesterday, 176 the day before", sent)
+	y := f.must(TypeMetricObserved, m.ID, MetricObserved{CollectionID: w, Value: float(177.4), ObservedAt: day(19)})
+	b := f.must(TypeMetricObserved, m.ID, MetricObserved{CollectionID: w, Value: float(176), ObservedAt: day(18)})
+	if v := recent(); len(v) != 2 || v[0].Value != 176 || v[1].Value != 177.4 {
+		t.Fatalf("two readings from one text: %+v", v)
+	}
 
-	vals, _ := f.s.MetricValues(ctx, w, sent.AddDate(0, 0, -2))
-	if len(vals) != 1 || vals[0].Value != 177.4 || !vals[0].ObservedAt.Equal(yesterday) {
-		t.Fatalf("want one value dated 10-19, got %+v", vals)
+	// A later text corrects the number: the date carries over.
+	fix := f.raw("the 176 was 175", sent.Add(time.Hour))
+	f.must(TypeMetricObserved, fix.ID, MetricObserved{CollectionID: w, Value: float(175), Replaces: b.ID})
+	if v := recent(); len(v) != 2 || v[0].Value != 175 || !v[0].ObservedAt.Equal(*day(18)) || v[0].SourceEventID != fix.ID {
+		t.Fatalf("after replacing: %+v", v)
+	}
+
+	// Removing a value, then removing it again, is fine; others stay.
+	f.must(TypeMetricRemoved, fix.ID, MetricRemoved{ValueID: y.ID, Reason: "owner says it was a typo"})
+	f.must(TypeMetricRemoved, fix.ID, MetricRemoved{ValueID: y.ID})
+	if v := recent(); len(v) != 1 || v[0].Value != 175 {
+		t.Fatalf("after removing: %+v", v)
 	}
 	if all, _ := f.s.MetricValues(ctx, w, time.Time{}); len(all) != 4 {
 		t.Fatalf("other events' values untouched: want 4, got %d", len(all))
 	}
+
+	f.mustReject(TypeMetricRemoved, MetricRemoved{ValueID: m.ID})                                        // not a value
+	f.mustReject(TypeMetricObserved, MetricObserved{CollectionID: w, Value: float(1), Replaces: "nope"}) // unknown
 }
 
 func TestProjectionRejects(t *testing.T) {

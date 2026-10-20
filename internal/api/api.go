@@ -23,6 +23,7 @@ var DerivedTypes = map[string]bool{
 	store.TypeLabelApplied:      true,
 	store.TypeLabelRemoved:      true,
 	store.TypeMetricObserved:    true,
+	store.TypeMetricRemoved:     true,
 	store.TypeRuleAdded:         true, // removing one is the owner's call, on the dashboard
 	"review.flagged":            true,
 }
@@ -39,6 +40,7 @@ func NewHandler(st *store.Store, log *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	mux.HandleFunc("GET /api/collections", h.collections)
 	mux.HandleFunc("GET /api/collections/{id}/members", h.members)
+	mux.HandleFunc("GET /api/collections/{id}/values", h.values)
 	mux.HandleFunc("GET /api/rules", h.rules)
 	mux.HandleFunc("GET /api/events", h.listEvents)
 	mux.HandleFunc("GET /api/events/{id}", h.event)
@@ -96,6 +98,30 @@ func (h *handler) members(w http.ResponseWriter, r *http.Request) {
 		ms = []store.Member{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"members": ms})
+}
+
+// GET /api/collections/{id}/values?since=RFC3339: a metric collection's
+// values, oldest first. Each value's event_id is what metric.removed and
+// metric.observed's replaces refer to.
+func (h *handler) values(w http.ResponseWriter, r *http.Request) {
+	var since time.Time
+	if v := r.URL.Query().Get("since"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "since must be RFC 3339")
+			return
+		}
+		since = t
+	}
+	vs, err := h.st.MetricValues(r.Context(), r.PathValue("id"), since)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	if vs == nil {
+		vs = []store.MetricValue{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"values": vs})
 }
 
 // Summary is an event in a list: the envelope, the payload's size, and the

@@ -19,7 +19,7 @@
   {{if .Count}}<chart-timeseries id="chart-{{.ID}}" points="{{.Points}}" average="{{.Average}}" unit="{{.Unit}}" label="{{.ChartLabel}}"></chart-timeseries>
   <details><summary>Table</summary>
     <table><thead><tr><th>When</th><th class="num">{{.Name}}</th><th class="num">7-day average</th></tr></thead>
-    <tbody>{{range .Rows}}<tr><td>{{.At.Format "Mon Jan 2 15:04"}}</td><td class="num">{{num .Value}}</td><td class="num">{{num .Average}}</td></tr>
+    <tbody>{{range .Rows}}<tr><td><local-time datetime="{{utc .At}}">{{.At.Format "Mon Jan 2 15:04"}} UTC</local-time></td><td class="num">{{num .Value}}</td><td class="num">{{num .Average}}</td></tr>
     {{end}}</tbody></table>
   </details>{{end}}
 </section>

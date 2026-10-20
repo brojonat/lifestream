@@ -15,10 +15,11 @@
 <thead><tr><th>When</th><th>What you sent</th><th>Became</th><th>Status</th></tr></thead>
 <tbody>
 {{range .Rows}}<tr class="{{.Status}}">
-  <td class="when"><span title="{{.At.Format "2006-01-02 15:04:05 MST"}}">{{.At | ago}}</span><br><span class="muted">{{.Source}}</span></td>
+  <td class="when"><local-time relative datetime="{{utc .At}}">{{.At | ago}}</local-time><br><span class="muted">{{.Source}}</span></td>
   <td class="text">{{trunc 280 .Text}}</td>
   <td class="became">{{range .Labels}}<span class="chip" title="{{.Reason}}">{{.Name}}</span>{{end}}
       {{range .Values}}<span class="chip">{{.}}</span>{{end}}
+      {{range .Changes}}<div class="muted">{{.}}</div>{{end}}
       {{range .Flags}}<div>⚠ {{.}}</div>{{end}}
       {{if $.Open}}<details class="add"><summary>add to…</summary>
         <form data-on:submit="@post('/inbox/add', {contentType: 'form'})">

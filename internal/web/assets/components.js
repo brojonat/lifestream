@@ -16,7 +16,8 @@ import * as d3 from 'd3'
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 const duration = () => (reduceMotion.matches ? 0 : 300)
 const fmt = d3.format(',.4~r')
-const day = d3.utcFormat('%b %-d')
+// Times are the viewer's local time; the server sends UTC.
+const day = d3.timeFormat('%b %-d')
 
 // Colors come from the page's custom properties, which inherit through the
 // shadow boundary, so light and dark follow the page.
@@ -82,8 +83,8 @@ function draw(svg, tip, props, width, t) {
   svg.attr('viewBox', `0 0 ${width} ${h}`).attr('height', h).attr('role', 'img').attr('aria-label', props.label)
 
   const xExt = d3.extent(pts, (d) => d.x)
-  if (xExt[0] && +xExt[0] === +xExt[1]) xExt[0] = d3.utcDay.offset(xExt[0], -1)
-  const x = d3.scaleUtc().domain(xExt[0] ? xExt : [d3.utcDay.offset(new Date(), -7), new Date()]).range([m.left, width - m.right])
+  if (xExt[0] && +xExt[0] === +xExt[1]) xExt[0] = d3.timeDay.offset(xExt[0], -1)
+  const x = d3.scaleTime().domain(xExt[0] ? xExt : [d3.timeDay.offset(new Date(), -7), new Date()]).range([m.left, width - m.right])
   // Readings like body weight sit far from zero; a zero baseline would
   // flatten every change, so the y domain hugs the data.
   const ys = pts.map((d) => d.y).concat(avg.map((d) => d.y))
@@ -143,3 +144,23 @@ function draw(svg, tip, props, width, t) {
     })
     .on('pointerleave', () => { cross.attr('visibility', 'hidden'); tip.hidden = true })
 }
+
+// <local-time datetime="2026-10-19T12:00:00Z"> shows a UTC time from the
+// server in the viewer's timezone. With `relative`, the server's text (e.g.
+// "5m ago") stays and only the tooltip is local. The text lives in a shadow
+// root so the page morph can't reset it to UTC; a morph that changes the
+// datetime attribute re-renders.
+const whenFmt = { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
+customElements.define('local-time', class extends HTMLElement {
+  static observedAttributes = ['datetime']
+  connectedCallback () { this.render() }
+  attributeChangedCallback () { this.render() }
+  render () {
+    const t = new Date(this.getAttribute('datetime'))
+    if (isNaN(t)) return
+    this.title = t.toLocaleString([], { dateStyle: 'medium', timeStyle: 'long' })
+    if (this.hasAttribute('relative')) return
+    const root = this.shadowRoot ?? this.attachShadow({ mode: 'open' })
+    root.textContent = t.toLocaleString([], whenFmt)
+  }
+})

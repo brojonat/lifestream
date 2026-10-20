@@ -130,6 +130,9 @@ var funcs = template.FuncMap{
 	"num":    num,
 	"signed": signed,
 	"deref":  func(p *float64) float64 { return *p },
+	// utc is a time for <local-time datetime=…>, which the browser shows in
+	// the viewer's timezone.
+	"utc": func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
 	"trunc": func(n int, s string) string {
 		if len(s) > n {
 			return s[:n] + "…"

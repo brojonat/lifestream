@@ -121,6 +121,7 @@ func TestMetricsPage(t *testing.T) {
 		`<div class="value">▼ -3<span class="unit">lb</span>`, // vs 178
 		`average="[[`,
 		`data-init="@get('/stream', {openWhenHidden: true})"`,
+		`<td><local-time datetime="` + now.AddDate(0, 0, -1).UTC().Format(time.RFC3339) + `">`, // the browser localizes it
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
@@ -150,7 +151,12 @@ func TestInboxPage(t *testing.T) {
 	w.add(store.SourceAgent, "review.flagged", unclear.ID, now, map[string]string{"question": "Is 17 a weight?"})
 	ignored := w.add("cli", "note", "", now, map[string]string{"text": "<b>hello</b>"})
 	waiting := w.add("cli", "note", "", now, map[string]string{"text": "just sent"})
-	for _, e := range []store.Event{filed, unclear, ignored} {
+	typo := w.add("twilio.sms", "message.received", "", now, map[string]string{"Body": "weight 1750"})
+	v := 1750.0
+	val := w.add(store.SourceAgent, store.TypeMetricObserved, typo.ID, now, store.MetricObserved{CollectionID: weight.ID, Value: &v})
+	fix := w.add("twilio.sms", "message.received", "", now, map[string]string{"Body": "drop the 1750, typo"})
+	w.add(store.SourceAgent, store.TypeMetricRemoved, fix.ID, now, store.MetricRemoved{ValueID: val.ID, Reason: "typo"})
+	for _, e := range []store.Event{filed, unclear, ignored, typo, fix} {
 		st.MarkDelivered(ctx, e.ID)
 	}
 	_ = waiting
@@ -161,14 +167,16 @@ func TestInboxPage(t *testing.T) {
 		`<tr class="flagged">`, "⚠ Is 17 a weight?",
 		`<tr class="ignored">`, "&lt;b&gt;hello&lt;/b&gt;",
 		`<tr class="waiting">`, "waiting for agent",
+		`<div class="muted">removed a value: typo</div>`,
+		`<local-time relative datetime="`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}
 	}
 	// Agent events are not inbox rows.
-	if strings.Count(body, "<tr class=") != 4 {
-		t.Errorf("want 4 rows, got %d", strings.Count(body, "<tr class="))
+	if strings.Count(body, "<tr class=") != 6 {
+		t.Errorf("want 6 rows, got %d", strings.Count(body, "<tr class="))
 	}
 }
 

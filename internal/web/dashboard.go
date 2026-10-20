@@ -155,14 +155,15 @@ func signed(v float64) string {
 
 // inboxRow is a raw event and what it became, flattened for the template.
 type inboxRow struct {
-	ID     string
-	At     time.Time
-	Source string
-	Text   string
-	Status string // waiting, filed, flagged, ignored
-	Labels []store.Membership
-	Values []string
-	Flags  []string
+	ID      string
+	At      time.Time
+	Source  string
+	Text    string
+	Status  string // waiting, filed, flagged, ignored
+	Labels  []store.Membership
+	Values  []string
+	Changes []string // what a correction did to earlier data
+	Flags   []string
 }
 
 type inboxData struct {
@@ -214,6 +215,16 @@ func buildRow(it store.InboxItem) inboxRow {
 			}
 			json.Unmarshal(d.Payload, &p)
 			row.Flags = append(row.Flags, firstNonEmpty(p.Question, p.Reason, "needs review"))
+		case store.TypeMetricRemoved, store.TypeLabelRemoved:
+			var p struct {
+				Reason string `json:"reason"`
+			}
+			json.Unmarshal(d.Payload, &p)
+			what := "removed a value"
+			if d.Type == store.TypeLabelRemoved {
+				what = "took an event out of a collection"
+			}
+			row.Changes = append(row.Changes, strings.TrimSuffix(what+": "+p.Reason, ": "))
 		}
 	}
 	switch {

@@ -21,6 +21,7 @@ const (
 	TypeLabelCorrected    = "label.corrected"
 	TypeLabelRemoved      = "label.removed"
 	TypeMetricObserved    = "metric.observed"
+	TypeMetricRemoved     = "metric.removed"
 	TypeRuleAdded         = "rule.added"
 	TypeRuleRemoved       = "rule.removed"
 )
@@ -84,6 +85,15 @@ type (
 		Value        *float64   `json:"value"`
 		Unit         string     `json:"unit,omitempty"` // default: the collection's
 		ObservedAt   *time.Time `json:"observed_at,omitempty"`
+		// Replaces is the metric.observed event whose value this one
+		// supersedes (a corrected number or date). Without observed_at, the
+		// replacement keeps the old value's time.
+		Replaces string `json:"replaces,omitempty"`
+	}
+	// MetricRemoved withdraws a value: ValueID is its metric.observed event.
+	MetricRemoved struct {
+		ValueID string `json:"value_id"`
+		Reason  string `json:"reason"`
 	}
 )
 
@@ -358,9 +368,17 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 		if p.Unit == "" {
 			p.Unit = c.Unit
 		}
+		var replaced *time.Time
+		if p.Replaces != "" {
+			if replaced, err = dropValue(ctx, tx, e.Owner, p.Replaces, c.ID); err != nil {
+				return err
+			}
+		}
 		observed := e.OccurredAt
 		if p.ObservedAt != nil {
 			observed = *p.ObservedAt
+		} else if replaced != nil {
+			observed = *replaced
 		} else if e.ParentID != "" {
 			parent, err := scanEvent(tx.QueryRowContext(ctx, selectEvent+` WHERE id = ?`, e.ParentID))
 			if err != nil {
@@ -368,18 +386,20 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 			}
 			observed = parent.OccurredAt
 		}
-		// One value per source event and collection: logging again (a
-		// corrected number or date) replaces it.
-		if e.ParentID != "" {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM metric_values WHERE collection_id = ? AND source_event_id = ?`, c.ID, e.ParentID); err != nil {
-				return fmt.Errorf("projecting %s: %w", e.Type, err)
-			}
-		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO metric_values
 			(event_id, owner, collection_id, source_event_id, metric, value, unit, observed_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			e.ID, e.Owner, c.ID, nullable(e.ParentID), p.Metric, *p.Value, nullable(p.Unit), fmtTime(observed)); err != nil {
 			return fmt.Errorf("projecting %s: %w", e.Type, err)
+		}
+
+	case TypeMetricRemoved:
+		var p MetricRemoved
+		if err := decode(e, &p); err != nil {
+			return err
+		}
+		if _, err := dropValue(ctx, tx, e.Owner, p.ValueID, ""); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -759,4 +779,37 @@ func (s *Store) OpenFlags(ctx context.Context, owner string) ([]Event, error) {
 	return s.queryEvents(ctx, selectEvent+` WHERE owner = ? AND type = 'review.flagged'
 		AND NOT EXISTS (SELECT 1 FROM events a WHERE a.parent_id = events.id AND a.type = 'review.answered')
 		ORDER BY seq`, owner)
+}
+
+// dropValue deletes the value a metric.observed event recorded, after
+// checking the event is one (the owner's, in collectionID when that's set).
+// It returns the value's time, or nil when it was already gone: removing or
+// replacing a value twice is harmless.
+func dropValue(ctx context.Context, tx *sql.Tx, owner, valueID, collectionID string) (*time.Time, error) {
+	v, err := scanEvent(tx.QueryRowContext(ctx, selectEvent+` WHERE id = ?`, valueID))
+	if errors.Is(err, ErrNotFound) || err == nil && (v.Type != TypeMetricObserved || v.Owner != owner) {
+		return nil, invalid("%s is not a value (a metric.observed event)", valueID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading value %s: %w", valueID, err)
+	}
+	var in, at string
+	err = tx.QueryRowContext(ctx, `SELECT collection_id, observed_at FROM metric_values WHERE event_id = ?`, valueID).Scan(&in, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading value %s: %w", valueID, err)
+	}
+	if collectionID != "" && in != collectionID {
+		return nil, invalid("value %s is in collection %s, not %s", valueID, in, collectionID)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM metric_values WHERE event_id = ?`, valueID); err != nil {
+		return nil, fmt.Errorf("removing value %s: %w", valueID, err)
+	}
+	t, err := parseTime(at)
+	if err != nil {
+		return nil, fmt.Errorf("reading value %s: %w", valueID, err)
+	}
+	return &t, nil
 }

@@ -12,7 +12,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { Agent, describe, POINTER_BYTES } from "../src/agent.ts";
-import { type Collection, GoApi, type StoredEvent } from "../src/goapi.ts";
+import { type Collection, GoApi, type MetricValue, type StoredEvent } from "../src/goapi.ts";
 import { newLogger } from "../src/log.ts";
 import { type Judge, judgePrompt, parseVerdicts } from "../src/lookback.ts";
 import { handler } from "../src/server.ts";
@@ -27,6 +27,7 @@ class FakeGo {
 	rules: { id: string; text: string; source: string }[] = [];
 	events: (StoredEvent & { seq: number })[] = []; // raw events the look-back can find
 	members = new Map<string, Set<string>>();
+	values: MetricValue[] = [];
 	submitted = new Map<string, StoredEvent & { seq: number }>();
 	server!: Server;
 	url = "";
@@ -50,6 +51,10 @@ class FakeGo {
 			const m = /^\/api\/collections\/(\w+)\/members$/.exec(url.pathname);
 			if (req.method === "GET" && m) {
 				return json(200, { members: [...(this.members.get(m[1]) ?? [])].map((event_id) => ({ event_id, definition_version: 1 })) });
+			}
+			const vals = /^\/api\/collections\/(\w+)\/values$/.exec(url.pathname);
+			if (req.method === "GET" && vals) {
+				return json(200, { values: this.values.filter((v) => v.collection_id === vals[1]) });
 			}
 			const kids = /^\/api\/events\/(\w+)\/children$/.exec(url.pathname);
 			if (req.method === "GET" && kids) {
@@ -191,17 +196,41 @@ test("a rejected write goes back to the model as a tool error", async () => {
 	assert.match(toolResult, /^toolResult true .*rejected: .*422 definition_version 9/);
 });
 
-test("a reading the owner dates goes out with observed_at", async () => {
+test("readings: several per text, dated, listed, replaced, removed, unlabeled", async () => {
+	go.values = [{ event_id: "01VALUE1", collection_id: "01W", source_event_id: "E5", value: 176, unit: "lb", observed_at: "2026-10-18T19:00:00Z" }];
+	let listed = "";
 	const agent = await open([
-		fauxAssistantMessage([fauxToolCall("log_value", { event_id: "E5", collection_id: "01DERIVED1", value: 177.4, observed_at: "2026-10-19T12:00:00Z" })], { stopReason: "toolUse" }),
-		fauxAssistantMessage([fauxText("filed 177.4 lb for 10-19")]),
+		fauxAssistantMessage([
+			fauxToolCall("log_value", { event_id: "E5", collection_id: "01W", value: 177.4, observed_at: "2026-10-19T12:00:00-07:00" }),
+			fauxToolCall("log_value", { event_id: "E5", collection_id: "01W", value: 176, observed_at: "2026-10-18T12:00:00-07:00" }),
+		], { stopReason: "toolUse" }),
+		fauxAssistantMessage([fauxText("filed two")]),
+		fauxAssistantMessage([fauxToolCall("list_values", { collection_id: "01W" })], { stopReason: "toolUse" }),
+		(context) => {
+			listed = JSON.stringify(context.messages.at(-1));
+			return fauxAssistantMessage([
+				fauxToolCall("log_value", { event_id: "E6", collection_id: "01W", value: 175, replaces: "01VALUE1" }),
+				fauxToolCall("remove_value", { event_id: "E6", value_id: "01VALUE2", reason: "owner retracted it" }),
+				fauxToolCall("remove_label", { event_id: "E6", labeled_event_id: "E5", collection_id: "01W", definition_version: 1, reason: "not a weight" }),
+			], { stopReason: "toolUse" });
+		},
+		fauxAssistantMessage([fauxText("fixed")]),
 	]);
-	const sub = await agent.submit(OWNER, sms("E5", "my weight yesterday 10-19 was 177.4"), ctx);
-	assert.equal((await sub.wait(ctx)).status, "done");
+	const before = go.appends.length;
+	for (const [id, body] of [["E5", "177.4 yesterday, 176 the day before"], ["E6", "the 176 was 175; drop the other"]]) {
+		const sub = await agent.submit(OWNER, sms(id, body), ctx);
+		assert.equal((await sub.wait(ctx)).status, "done");
+	}
 	await agent.close(ctx);
-	const logged = go.appends.at(-1)!;
-	assert.equal(logged.body.type, "metric.observed");
-	assert.deepEqual(logged.body.payload, { collection_id: "01DERIVED1", value: 177.4, observed_at: "2026-10-19T12:00:00Z" });
+	const got = go.appends.slice(before).map((a) => ({ type: a.body.type, parent: a.body.parent_id, payload: a.body.payload }));
+	assert.deepEqual(got, [
+		{ type: "metric.observed", parent: "E5", payload: { collection_id: "01W", value: 177.4, observed_at: "2026-10-19T12:00:00-07:00" } },
+		{ type: "metric.observed", parent: "E5", payload: { collection_id: "01W", value: 176, observed_at: "2026-10-18T12:00:00-07:00" } },
+		{ type: "metric.observed", parent: "E6", payload: { collection_id: "01W", value: 175, replaces: "01VALUE1" } },
+		{ type: "metric.removed", parent: "E6", payload: { value_id: "01VALUE2", reason: "owner retracted it" } },
+		{ type: "label.removed", parent: "E6", payload: { event_id: "E5", collection_id: "01W", definition_version: 1, reason: "not a weight" } },
+	]);
+	assert.match(listed, /value_id=01VALUE1 observed_at=2026-10-18T19:00:00Z value=176 lb from_event=E5/);
 });
 
 test("what the owner teaches becomes a rule the next request sees", async () => {

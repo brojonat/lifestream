@@ -17,6 +17,9 @@ export type Collection = {
 
 export type OwnerRule = { id: string; text: string; source: string };
 
+/** One number in a metric collection. `event_id` is its metric.observed event: the id to replace or remove it by. */
+export type MetricValue = { event_id: string; collection_id: string; source_event_id: string; value: number; unit: string; observed_at: string };
+
 export type StoredEvent = {
 	seq?: number;
 	id: string;
@@ -82,6 +85,13 @@ export class GoApi {
 			members: { event_id: string; definition_version: number }[];
 		};
 		return body.members;
+	}
+
+	/** A metric collection's values observed at or after `since`, oldest first. */
+	async values(collectionId: string, since?: string): Promise<MetricValue[]> {
+		const q = since ? `?${new URLSearchParams({ since })}` : "";
+		const body = (await this.#request("GET", `/api/collections/${encodeURIComponent(collectionId)}/values${q}`)) as { values: MetricValue[] };
+		return body.values;
 	}
 
 	/** One event; with offset/limit, a byte range of its payload as `data`. */
