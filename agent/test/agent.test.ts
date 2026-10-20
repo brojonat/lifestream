@@ -191,6 +191,19 @@ test("a rejected write goes back to the model as a tool error", async () => {
 	assert.match(toolResult, /^toolResult true .*rejected: .*422 definition_version 9/);
 });
 
+test("a reading the owner dates goes out with observed_at", async () => {
+	const agent = await open([
+		fauxAssistantMessage([fauxToolCall("log_value", { event_id: "E5", collection_id: "01DERIVED1", value: 177.4, observed_at: "2026-10-19T12:00:00Z" })], { stopReason: "toolUse" }),
+		fauxAssistantMessage([fauxText("filed 177.4 lb for 10-19")]),
+	]);
+	const sub = await agent.submit(OWNER, sms("E5", "my weight yesterday 10-19 was 177.4"), ctx);
+	assert.equal((await sub.wait(ctx)).status, "done");
+	await agent.close(ctx);
+	const logged = go.appends.at(-1)!;
+	assert.equal(logged.body.type, "metric.observed");
+	assert.deepEqual(logged.body.payload, { collection_id: "01DERIVED1", value: 177.4, observed_at: "2026-10-19T12:00:00Z" });
+});
+
 test("what the owner teaches becomes a rule the next request sees", async () => {
 	let prompt = "";
 	const agent = await open([

@@ -125,6 +125,26 @@ func TestCollectionLifecycle(t *testing.T) {
 	}
 }
 
+func TestMetricValueDatedAndReplaced(t *testing.T) {
+	ctx := context.Background()
+	f, ids := weightStory(t)
+	w := ids["weight"]
+	sent := time.Date(2026, 10, 20, 16, 31, 0, 0, time.UTC)
+	yesterday := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+
+	m := f.raw("my weight yesterday 10-19 was 177.4", sent)
+	f.must(TypeMetricObserved, m.ID, MetricObserved{CollectionID: w, Value: float(177.4)})
+	f.must(TypeMetricObserved, m.ID, MetricObserved{CollectionID: w, Value: float(177.4), ObservedAt: &yesterday})
+
+	vals, _ := f.s.MetricValues(ctx, w, sent.AddDate(0, 0, -2))
+	if len(vals) != 1 || vals[0].Value != 177.4 || !vals[0].ObservedAt.Equal(yesterday) {
+		t.Fatalf("want one value dated 10-19, got %+v", vals)
+	}
+	if all, _ := f.s.MetricValues(ctx, w, time.Time{}); len(all) != 4 {
+		t.Fatalf("other events' values untouched: want 4, got %d", len(all))
+	}
+}
+
 func TestProjectionRejects(t *testing.T) {
 	f, ids := weightStory(t)
 	w := ids["weight"]

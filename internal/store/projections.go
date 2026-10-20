@@ -368,6 +368,13 @@ func apply(ctx context.Context, tx *sql.Tx, e Event) error {
 			}
 			observed = parent.OccurredAt
 		}
+		// One value per source event and collection: logging again (a
+		// corrected number or date) replaces it.
+		if e.ParentID != "" {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM metric_values WHERE collection_id = ? AND source_event_id = ?`, c.ID, e.ParentID); err != nil {
+				return fmt.Errorf("projecting %s: %w", e.Type, err)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO metric_values
 			(event_id, owner, collection_id, source_event_id, metric, value, unit, observed_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,

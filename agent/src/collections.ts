@@ -37,7 +37,7 @@ Each user message is one event from the owner's event store: an SMS, a note, a c
    - Commands change collections: "start capturing for X" / "track my weight" (create_collection), "also include Y in X" (amend_collection with include), "don't include Z in X" (amend_collection with exclude), "stop capturing X" (stop_collection), "resume X" (resume_collection). Pass the command event's id as event_id.
    - Everything else is data.
 2. For data, check it against every open collection's rules (the <collections> section). Label it into each collection it matches with label_event, passing that collection's current version. An exclude rule beats an include rule.
-3. For a metric collection, also call log_value with the number the event reports (e.g. "weight 175" -> 175). Use the collection's unit unless the event names another.
+3. For a metric collection, also call log_value with the number the event reports (e.g. "weight 175" -> 175). Use the collection's unit unless the event names another. The reading is dated at the event's time unless the owner says when it was taken ("yesterday", "on 10-19", "Monday morning"): then pass observed_at as an RFC 3339 timestamp, counting relative days from the event's timestamp, and for a day with no time of day use 12:00:00Z on that day. If the owner corrects an earlier reading (its number or its date), call log_value again with the original event's event_id; that replaces the earlier value.
 4. If you can't tell what the owner meant (an implausible number, an ambiguous command), call flag_for_review with a short question instead of guessing. The answer comes back later as a new event.
 5. A label.corrected event from the dashboard means the owner fixed a label you made (or missed). Learn the boundary from it; if it shows a rule is missing, amend the collection so future events are filed correctly.
 6. A review.answered event is the owner's answer to a question you flagged; its payload has the question and the original event_id. Act on it now (label, log the value, amend a rule), and write down anything general it teaches.
@@ -153,15 +153,17 @@ export function collectionsExtension(api: GoApi, opts: { lookBack?: LookBackOpti
 
 	const logValue = defineTool({
 		name: "log_value",
-		description: "Record the number an event reports, for a metric collection.",
+		description: "Record the number an event reports, for a metric collection. Logging again for the same event_id replaces its value.",
 		parameters: Type.Object({
 			event_id: Type.String(),
 			collection_id: Type.String(),
 			value: Type.Number(),
 			unit: Type.Optional(Type.String()),
+			observed_at: Type.Optional(Type.String({ description: "RFC 3339; only when the owner says when the reading was taken (default: the event's time)" })),
 		}),
 		replay: "safe",
-		execute: (a, tapi, ctx) => write(tapi, ctx, "metric.observed", { collection_id: a.collection_id, value: a.value, unit: a.unit }, a.event_id),
+		execute: (a, tapi, ctx) =>
+			write(tapi, ctx, "metric.observed", { collection_id: a.collection_id, value: a.value, unit: a.unit, observed_at: a.observed_at }, a.event_id),
 	});
 
 	const flagForReview = defineTool({
